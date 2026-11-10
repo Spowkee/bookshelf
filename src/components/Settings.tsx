@@ -20,6 +20,7 @@ import {
 import { STATUS_LABELS, STATUS_ORDER, type Book } from '../db/schema'
 import { ImportSheet } from './ImportSheet'
 import { RefreshSheet } from './RefreshSheet'
+import { DuplicatesSheet } from './DuplicatesSheet'
 
 interface Props {
   books: Book[]
@@ -39,6 +40,7 @@ export function Settings({ books, onChanged }: Props) {
   const [message, setMessage] = useState<{ kind: 'info' | 'error'; text: string } | null>(null)
   const [foreignFile, setForeignFile] = useState<File | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [dedup, setDedup] = useState(false)
   const [lastBackup, setLastBackup] = useState<string | null>(null)
   const [pending, setPending] = useState(0)
   const [backupCount, setBackupCount] = useState(0)
@@ -252,6 +254,16 @@ export function Settings({ books, onChanged }: Props) {
         Rien de ce que tu as saisi n'est modifié — seuls les champs vides sont remplis.
       </p>
 
+      <div className="section-title">Doublons</div>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Repère les livres présents en plusieurs exemplaires et les fusionne en un seul. Ce qui
+        manque à celui qui reste est repris sur les autres : notes, tags, dates et couvertures
+        sont conservés.
+      </p>
+      <button className="btn btn-block" onClick={() => setDedup(true)}>
+        Chercher les doublons
+      </button>
+
       <div className="section-title">Sauvegarde</div>
 
       {pending > 0 && (
@@ -417,6 +429,20 @@ export function Settings({ books, onChanged }: Props) {
         général de la BnF. Aucune donnée personnelle ne quitte l'appareil : les seules requêtes
         réseau sont les recherches de livres.
       </p>
+
+      {dedup && (
+        <DuplicatesSheet
+          onClose={() => setDedup(false)}
+          onDone={(result) => {
+            setDedup(false)
+            onChanged()
+            setMessage({
+              kind: 'info',
+              text: `${result.removed} doublon${result.removed > 1 ? 's' : ''} retiré${result.removed > 1 ? 's' : ''}, ${result.fieldsRecovered} champ${result.fieldsRecovered > 1 ? 's' : ''} récupéré${result.fieldsRecovered > 1 ? 's' : ''}.`,
+            })
+          }}
+        />
+      )}
 
       {refreshing && (
         <RefreshSheet

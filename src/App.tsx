@@ -170,6 +170,7 @@ export default function App() {
           book={selected}
           onClose={() => setSelected(null)}
           onChanged={refresh}
+          onOpenBook={setSelected}
         />
       )}
     </div>

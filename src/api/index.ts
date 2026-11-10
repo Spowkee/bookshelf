@@ -8,6 +8,7 @@ import { normalizeLanguage } from '../lib/language'
 export type { BookDraft, SearchQuery } from './types'
 export { isEmptyQuery } from './types'
 export { coverUrlFromIsbn } from './openlibrary'
+export { findSeriesVolumes, missingVolumes, type SeriesVolume } from './seriesLookup'
 export {
   isThrottled as isGoogleThrottled,
   throttleMinutesLeft as googleThrottleMinutesLeft,

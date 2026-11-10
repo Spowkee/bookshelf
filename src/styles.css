@@ -616,3 +616,35 @@ textarea.input { resize: vertical; min-height: 86px; line-height: 1.5; }
 
 .prompt-banner { padding: 13px 15px; }
 .prompt-banner .btn-ghost { padding: 7px 10px; }
+
+.dup-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.dup-row:last-child { border-bottom: 0; }
+.dup-row .cover { width: 42px; flex: 0 0 42px; }
+.dup-row b { font-size: 0.88rem; font-weight: 620; display: block; }
+
+.serie-row {
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.serie-row[data-current='true'] { background: var(--accent-soft); }
+
+.status-pill {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 650;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #fff;
+  white-space: nowrap;
+}
+:root[data-theme='dark'] .status-pill { color: #1a120d; }

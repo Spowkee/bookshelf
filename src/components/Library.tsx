@@ -45,6 +45,7 @@ export function Library({ books, onOpen, onGoScan }: Props) {
   const [statusFilter, setStatusFilter] = useState<ReadingStatus | 'all'>('all')
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [genreFilter, setGenreFilter] = useState<string | null>(null)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [sort, setSort] = useState<SortKey>('recent')
   const sectionRefs = useRef(new Map<string, HTMLDivElement>())
 
@@ -151,6 +152,10 @@ export function Library({ books, onOpen, onGoScan }: Props) {
 
   const available = useMemo(() => new Set((sections ?? []).map((s) => s.letter)), [sections])
 
+  // Un filtre actif doit rester visible, sinon on ne comprend pas pourquoi
+  // la bibliothèque paraît amputée.
+  const showExtraFilters = filtersOpen || genreFilter !== null || tagFilter !== null
+
   const scrollToLetter = useCallback((letter: string) => {
     sectionRefs.current.get(letter)?.scrollIntoView({ block: 'start', behavior: 'auto' })
   }, [])
@@ -206,34 +211,66 @@ export function Library({ books, onOpen, onGoScan }: Props) {
         })}
       </div>
 
-      {allGenres.length > 0 && (
-        <div className="chips" style={{ marginBottom: 10 }}>
-          {allGenres.map(([g, n]) => (
+      {/* Genres et tags restent repliés par défaut : affichés d'emblée, ils
+          noient les états de lecture sous trois rangées de puces alors que
+          c'est par l'état qu'on filtre neuf fois sur dix. Ils se déplient à la
+          demande, et restent dépliés tant qu'un filtre est actif. */}
+      {(allGenres.length > 0 || allTags.length > 0) && (
+        <>
+          {!showExtraFilters ? (
             <button
-              key={g}
-              className="chip"
-              aria-pressed={genreFilter === g}
-              onClick={() => setGenreFilter(genreFilter === g ? null : g)}
+              className="btn btn-ghost tiny"
+              style={{ paddingLeft: 0, marginBottom: 10 }}
+              onClick={() => setFiltersOpen(true)}
             >
-              {g} ({n})
+              + Filtrer par genre ou tag
             </button>
-          ))}
-        </div>
-      )}
+          ) : (
+            <>
+              {allGenres.length > 0 && (
+                <div className="chips" style={{ marginBottom: 8 }}>
+                  {allGenres.map(([g, n]) => (
+                    <button
+                      key={g}
+                      className="chip"
+                      aria-pressed={genreFilter === g}
+                      onClick={() => setGenreFilter(genreFilter === g ? null : g)}
+                    >
+                      {g} ({n})
+                    </button>
+                  ))}
+                </div>
+              )}
 
-      {allTags.length > 0 && (
-        <div className="chips" style={{ marginBottom: 10 }}>
-          {allTags.map((t) => (
-            <button
-              key={t}
-              className="chip"
-              aria-pressed={tagFilter === t}
-              onClick={() => setTagFilter(tagFilter === t ? null : t)}
-            >
-              #{t}
-            </button>
-          ))}
-        </div>
+              {allTags.length > 0 && (
+                <div className="chips" style={{ marginBottom: 8 }}>
+                  {allTags.map((t) => (
+                    <button
+                      key={t}
+                      className="chip"
+                      aria-pressed={tagFilter === t}
+                      onClick={() => setTagFilter(tagFilter === t ? null : t)}
+                    >
+                      #{t}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <button
+                className="btn btn-ghost tiny"
+                style={{ paddingLeft: 0, marginBottom: 10 }}
+                onClick={() => {
+                  setFiltersOpen(false)
+                  setGenreFilter(null)
+                  setTagFilter(null)
+                }}
+              >
+                Masquer ces filtres
+              </button>
+            </>
+          )}
+        </>
       )}
 
       <div className="row" style={{ marginBottom: 14 }}>

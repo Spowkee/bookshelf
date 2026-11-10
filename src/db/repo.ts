@@ -5,7 +5,7 @@ import { formatIsbn } from '../lib/isbn'
 import { languageLabel } from '../lib/language'
 import type { MappedRow } from '../lib/importMapping'
 import { deriveGenre } from '../lib/genre'
-import { parseSeries } from '../lib/series'
+import { parseSeries, seriesKey } from '../lib/series'
 import { fetchWithTimeout } from '../lib/timeout'
 
 const nowIso = () => new Date().toISOString()
@@ -78,6 +78,15 @@ export async function listSuggestions(): Promise<{ tags: string[]; series: strin
     tags: [...tags.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fr')).map(([t]) => t),
     series: [...series].sort((a, b) => a.localeCompare(b, 'fr')),
   }
+}
+
+/** Les livres d'une même série déjà présents, dans l'ordre des tomes. */
+export async function booksInSeries(series: string): Promise<Book[]> {
+  const key = seriesKey(series)
+  const books = await allBooks()
+  return books
+    .filter((b) => b.series && seriesKey(b.series) === key)
+    .sort((a, b) => (a.seriesIndex ?? 999) - (b.seriesIndex ?? 999) || a.title.localeCompare(b.title, 'fr'))
 }
 
 export async function getBook(id: string): Promise<Book | undefined> {
@@ -467,9 +476,46 @@ export async function importForeignRows(
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
   let consecutiveFailures = 0
 
+  /**
+   * Trois index, parce qu'un seul ne suffit pas.
+   *
+   * Le piège : la complétion modifie le livre enregistré. Si le fichier n'a pas
+   * de colonne auteur, le premier import écrit l'auteur trouvé au catalogue ;
+   * au second passage on compare un auteur vide à un auteur rempli, les clés
+   * divergent et le livre est réimporté. D'où l'index par titre seul, consulté
+   * dès que l'un des deux côtés n'a pas d'auteur.
+   *
+   * L'ISBN-10 est indexé aussi : un fichier peut le fournir là où un autre
+   * donne l'ISBN-13, pour la même édition.
+   */
   const existing = await allBooks()
-  const byIsbn = new Map(existing.filter((b) => b.isbn13).map((b) => [b.isbn13!, b]))
-  const byTitleAuthor = new Map(existing.map((b) => [titleAuthorKey(b.title, b.authors[0]), b]))
+  const byIsbn = new Map<string, Book>()
+  const byTitleAuthor = new Map<string, Book>()
+  const byTitle = new Map<string, Book>()
+
+  function index(book: Book) {
+    if (book.isbn13) byIsbn.set(book.isbn13, book)
+    if (book.isbn10) byIsbn.set(book.isbn10, book)
+    byTitleAuthor.set(titleAuthorKey(book.title, book.authors[0]), book)
+    const t = titleAuthorKey(book.title)
+    if (!byTitle.has(t)) byTitle.set(t, book)
+  }
+  existing.forEach(index)
+
+  function findDuplicate(row: MappedRow): Book | undefined {
+    if (row.isbn13 && byIsbn.has(row.isbn13)) return byIsbn.get(row.isbn13)
+    if (row.isbn10 && byIsbn.has(row.isbn10)) return byIsbn.get(row.isbn10)
+
+    const withAuthor = byTitleAuthor.get(titleAuthorKey(row.title, row.authors[0]))
+    if (withAuthor) return withAuthor
+
+    // Titre identique et auteur absent d'un côté : c'est le même livre, dont
+    // la fiche a simplement été complétée entre-temps.
+    const sameTitle = byTitle.get(titleAuthorKey(row.title))
+    if (sameTitle && (row.authors.length === 0 || sameTitle.authors.length === 0)) return sameTitle
+
+    return undefined
+  }
 
   let done = 0
   for (const row of rows) {
@@ -486,9 +532,7 @@ export async function importForeignRows(
 
     options.onProgress?.(done, rows.length, row.title)
 
-    const duplicate = row.isbn13
-      ? byIsbn.get(row.isbn13)
-      : byTitleAuthor.get(titleAuthorKey(row.title, row.authors[0]))
+    const duplicate = findDuplicate(row)
 
     if (duplicate) {
       result.duplicates++
@@ -550,8 +594,8 @@ export async function importForeignRows(
     }
 
     await db.books.add(book)
-    if (book.isbn13) byIsbn.set(book.isbn13, book)
-    byTitleAuthor.set(titleAuthorKey(book.title, book.authors[0]), book)
+    // Indexé aussitôt : un même fichier peut contenir deux fois la même ligne.
+    index(book)
     result.added++
 
     // La couverture est attendue, pas lancée en arrière-plan : 300 appels
@@ -573,10 +617,163 @@ export async function importForeignRows(
   return result
 }
 
+/** Clé de rapprochement. Sans auteur, elle ne porte que sur le titre. */
 function titleAuthorKey(title: string, author?: string): string {
   const norm = (s: string) =>
     s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '')
   return `${norm(title)}|${norm(author ?? '')}`
+}
+
+// ------------------------------------------------------------- doublons
+
+export interface DuplicateGroup {
+  /** L'exemplaire à conserver : le plus riche, et jamais celui qui porte des notes. */
+  keep: Book
+  /** Les autres, qui seront fusionnés dedans puis retirés. */
+  remove: Book[]
+}
+
+/**
+ * Qualité d'un exemplaire, pour décider lequel garder.
+ *
+ * Les données saisies à la main pèsent mille fois plus que le reste : perdre
+ * une note de lecture pour conserver un résumé serait absurde. Vient ensuite
+ * la couverture, puis le nombre de champs remplis.
+ */
+function bookScore(b: Book, hasCover: boolean): number {
+  const userData =
+    (b.rating ? 1 : 0) +
+    (b.notes ? 1 : 0) +
+    b.tags.length +
+    (b.startedAt ? 1 : 0) +
+    (b.finishedAt ? 1 : 0) +
+    (b.status !== 'read' ? 1 : 0)
+
+  const filled = [
+    b.isbn13, b.description, b.pageCount, b.publisher, b.publishedYear,
+    b.language, b.genre, b.series, b.authors.length > 0 ? 'a' : undefined,
+  ].filter(Boolean).length
+
+  return userData * 1000 + (hasCover ? 100 : 0) + filled
+}
+
+/**
+ * Repère les exemplaires multiples d'un même livre.
+ *
+ * Mêmes règles de rapprochement que l'import — ISBN d'abord, puis titre et
+ * auteur, puis titre seul quand un côté n'a pas d'auteur — pour que ce qui est
+ * considéré comme doublon ici le soit aussi à l'import.
+ */
+export async function findDuplicateGroups(): Promise<DuplicateGroup[]> {
+  const books = await allBooks()
+  const coverIds = new Set<string>()
+  await db.covers.each((c) => coverIds.add(c.bookId))
+
+  // Regroupement en deux passes : l'ISBN fait autorité, le titre ne sert que
+  // pour les livres qui n'en ont pas.
+  const groups = new Map<string, Book[]>()
+  const keyOf = (b: Book) =>
+    b.isbn13 ? `i:${b.isbn13}` : b.isbn10 ? `i:${b.isbn10}` : `t:${titleAuthorKey(b.title)}`
+
+  for (const b of books) {
+    const k = keyOf(b)
+    const list = groups.get(k)
+    if (list) list.push(b)
+    else groups.set(k, [b])
+  }
+
+  const result: DuplicateGroup[] = []
+  for (const list of groups.values()) {
+    if (list.length < 2) continue
+
+    // Sans ISBN, on n'assemble que si les auteurs concordent ou manquent :
+    // deux livres homonymes d'auteurs différents ne sont pas des doublons.
+    const noIsbn = !list[0].isbn13 && !list[0].isbn10
+    if (noIsbn) {
+      const authors = new Set(list.map((b) => titleAuthorKey('', b.authors[0])).filter((a) => a !== '|'))
+      if (authors.size > 1) continue
+    }
+
+    const sorted = [...list].sort(
+      (a, b) =>
+        bookScore(b, coverIds.has(b.id)) - bookScore(a, coverIds.has(a.id)) ||
+        a.createdAt.localeCompare(b.createdAt),
+    )
+    result.push({ keep: sorted[0], remove: sorted.slice(1) })
+  }
+
+  return result.sort((a, b) => a.keep.title.localeCompare(b.keep.title, 'fr'))
+}
+
+export interface MergeResult {
+  groups: number
+  removed: number
+  fieldsRecovered: number
+  coversRecovered: number
+}
+
+/**
+ * Fusionne puis retire les doublons.
+ *
+ * On ne supprime jamais sèchement : ce qui manque à l'exemplaire conservé est
+ * repris sur les autres avant qu'ils ne partent. Si une copie portait une note
+ * et l'autre un commentaire, les deux survivent. La suppression reste logique
+ * (tombstone), donc réversible par un import de sauvegarde.
+ */
+export async function mergeDuplicates(groups: DuplicateGroup[]): Promise<MergeResult> {
+  const result: MergeResult = { groups: 0, removed: 0, fieldsRecovered: 0, coversRecovered: 0 }
+
+  for (const { keep, remove } of groups) {
+    const changes: Partial<Book> = {}
+    const tags = new Set(keep.tags)
+
+    for (const dup of remove) {
+      if (!keep.isbn13 && dup.isbn13) changes.isbn13 = dup.isbn13
+      if (!keep.isbn10 && dup.isbn10) changes.isbn10 = dup.isbn10
+      if (!keep.description && dup.description) changes.description = dup.description
+      if (!keep.pageCount && dup.pageCount) changes.pageCount = dup.pageCount
+      if (!keep.publisher && dup.publisher) changes.publisher = dup.publisher
+      if (!keep.publishedYear && dup.publishedYear) changes.publishedYear = dup.publishedYear
+      if (!keep.language && dup.language) changes.language = dup.language
+      if (!keep.genre && dup.genre) changes.genre = dup.genre
+      if (!keep.series && dup.series) changes.series = dup.series
+      if (!keep.seriesIndex && dup.seriesIndex) changes.seriesIndex = dup.seriesIndex
+      if (keep.authors.length === 0 && dup.authors.length > 0) changes.authors = dup.authors
+      if (keep.subjects.length === 0 && dup.subjects.length > 0) changes.subjects = dup.subjects
+
+      // Données saisies : on récupère ce que l'exemplaire conservé n'a pas.
+      if (!keep.rating && dup.rating) changes.rating = dup.rating
+      if (!keep.notes && dup.notes) changes.notes = dup.notes
+      if (!keep.startedAt && dup.startedAt) changes.startedAt = dup.startedAt
+      if (!keep.finishedAt && dup.finishedAt) changes.finishedAt = dup.finishedAt
+      for (const t of dup.tags) tags.add(t)
+
+      // La couverture déjà téléchargée est récupérée plutôt que refaite.
+      if (!(await hasCover(keep.id))) {
+        const blob = await getCoverBlob(dup.id)
+        if (blob) {
+          await db.covers.put({ bookId: keep.id, blob, fetchedAt: nowIso() })
+          result.coversRecovered++
+        }
+      }
+    }
+
+    if (tags.size !== keep.tags.length) changes.tags = [...tags]
+
+    const count = Object.keys(changes).length
+    if (count > 0) {
+      await updateBook(keep.id, changes)
+      result.fieldsRecovered += count
+    }
+
+    for (const dup of remove) {
+      await deleteBook(dup.id)
+      result.removed++
+    }
+    result.groups++
+  }
+
+  return result
 }
 
 // ----------------------------------------------- complétion des fiches

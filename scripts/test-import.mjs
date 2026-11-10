@@ -245,6 +245,23 @@ for (const title of ['Appartement 12', 'Symptome 3', 'Le Concert 5', 'Document 7
   check(`pas de serie dans "${title}"`, series.parseSeries(title), null)
 }
 
+section('Numéro de tome avec série connue')
+for (const [title, serie, expected] of [
+  ['ONE PIECE 1', 'One Piece', 1],
+  ['One Piece 105', 'One Piece', 105],
+  ['One Piece nº 01', 'One Piece', 1],
+  ['One Piece, tome 42', 'One Piece', 42],
+  ['Naruto t.33', 'Naruto', 33],
+  // Un hors-série n'est pas un tome.
+  ['ONE PIECE PIRATE RECIPES', 'One Piece', undefined],
+  // Les volumes nommés n'ont pas de numéro.
+  ['Harry Potter and the Chamber of Secrets', 'Harry Potter', undefined],
+  // Série différente : rien, même si un nombre traîne.
+  ['Dune 2', 'One Piece', undefined],
+]) {
+  check(`volume "${title}" [${serie}]`, series.volumeNumberFor(title, serie), expected)
+}
+
 check('libelle', series.seriesLabel('Dune', 2), 'Dune · tome 2')
 check('libelle sans tome', series.seriesLabel('Dune'), 'Dune')
 check('cle de regroupement', series.seriesKey('Le Trône de Fer'), series.seriesKey('le trone de fer'))

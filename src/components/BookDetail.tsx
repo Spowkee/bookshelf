@@ -18,14 +18,17 @@ import { BookCover } from './BookCover'
 import { IconRefresh } from './icons'
 import { downscaleImage } from '../lib/image'
 import { Sheet } from './Sheet'
+import { SeriesSheet } from './SeriesSheet'
 
 interface Props {
   book: Book
   onClose: () => void
   onChanged: () => void
+  /** Ouvre un autre livre — navigation entre les tomes d'une série. */
+  onOpenBook?: (book: Book) => void
 }
 
-export function BookDetail({ book, onClose, onChanged }: Props) {
+export function BookDetail({ book, onClose, onChanged, onOpenBook }: Props) {
   const [status, setStatus] = useState(book.status)
   const [rating, setRating] = useState(book.rating ?? 0)
   const [notes, setNotes] = useState(book.notes ?? '')
@@ -38,6 +41,7 @@ export function BookDetail({ book, onClose, onChanged }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [newTag, setNewTag] = useState('')
   const [newTagOpen, setNewTagOpen] = useState(false)
+  const [seriesOpen, setSeriesOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
   const [coverKey, setCoverKey] = useState(0)
@@ -250,7 +254,12 @@ export function BookDetail({ book, onClose, onChanged }: Props) {
         />
       </div>
       {series && (
-        <p className="tiny muted">{seriesLabel(series, seriesIndex ? Number(seriesIndex) : undefined)}</p>
+        <>
+          <p className="tiny muted">{seriesLabel(series, seriesIndex ? Number(seriesIndex) : undefined)}</p>
+          <button className="btn btn-block" style={{ marginTop: 6 }} onClick={() => setSeriesOpen(true)}>
+            Voir toute la série
+          </button>
+        </>
       )}
 
       <div className="section-title">Mes tags</div>
@@ -401,6 +410,20 @@ export function BookDetail({ book, onClose, onChanged }: Props) {
       </button>
 
       <div style={{ height: 10 }} />
+
+      {seriesOpen && book.series && (
+        <SeriesSheet
+          series={book.series}
+          author={book.authors[0]}
+          currentId={book.id}
+          onClose={() => setSeriesOpen(false)}
+          onOpenBook={(other) => {
+            setSeriesOpen(false)
+            onOpenBook?.(other)
+          }}
+          onChanged={onChanged}
+        />
+      )}
 
       {confirmDelete ? (
         <div className="row">

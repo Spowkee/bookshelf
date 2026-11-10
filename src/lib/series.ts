@@ -111,3 +111,35 @@ export function seriesKey(series: string): string {
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]/g, '')
 }
+
+/**
+ * Numéro de tome lorsqu'on connaît déjà le nom de la série.
+ *
+ * Contexte différent de `parseSeries`, d'où des règles différentes : là, on
+ * ignore un nombre nu parce qu'il peut être une date ou un lieu. Ici, la
+ * recherche est déjà restreinte à une série, donc « ONE PIECE 1 » ne peut
+ * raisonnablement désigner que le tome 1 — forme la plus répandue dans les
+ * catalogues, qui normalisent les titres de manga ainsi.
+ */
+export function volumeNumberFor(title: string, series: string): number | undefined {
+  const parsed = parseSeries(title)
+  if (parsed && seriesKey(parsed.series) === seriesKey(series) && parsed.index) {
+    return parsed.index
+  }
+
+  // Retire le nom de la série en tête, puis lit ce qui reste.
+  const normalized = seriesKey(title)
+  const prefix = seriesKey(series)
+  if (!normalized.startsWith(prefix)) return undefined
+
+  const rest = title
+    .replace(new RegExp('^\\s*' + series.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '')
+    .replace(/^[\s,\-–—:nºo°#.]+/i, '')
+    .trim()
+
+  const m = rest.match(/^(\d{1,3})\b/)
+  if (!m) return undefined
+
+  const n = Number(m[1])
+  return n > 0 && n <= 999 ? n : undefined
+}
