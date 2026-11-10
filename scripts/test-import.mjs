@@ -196,6 +196,8 @@ for (const [subjects, expected] of [
   [['Biography & Autobiography'], 'Biographie'],
   [['Juvenile Fiction'], 'Jeunesse'],
   [['Fiction'], 'Roman'],
+  [['form:manga', 'form:manga volume'], 'Manga'],
+  [['Comics & graphic novels', 'east asian style', 'manga'], 'Manga'],
   [[], undefined],
   [['Quelque chose de totalement inconnu'], undefined],
 ]) {
@@ -224,6 +226,25 @@ for (const [title, expected] of [
 ]) {
   check(`serie "${title}"`, series.parseSeries(title), expected)
 }
+section('Séries : numérotation manga')
+for (const [title, expected] of [
+  ['Naruto t.33', { series: 'Naruto', index: 33 }],
+  ['One Piece nº 01', { series: 'One Piece', index: 1 }],
+  ['Naruto vol. 5', { series: 'Naruto', index: 5 }],
+  ['One Piece tome 105', { series: 'One Piece', index: 105 }],
+  ['Berserk - Tome 01', { series: 'Berserk', index: 1 }],
+]) {
+  check(`manga "${title}"`, series.parseSeries(title), expected)
+}
+
+section('Séries : faux positifs à ne pas produire')
+// Sans séparateur obligatoire, le mot-clé serait cherché au milieu des mots :
+// « Symptome 3 » donnerait la série « Symp », « Appartement 12 » la série
+// « Appartemen ». Ces cas ont réellement régressé une fois.
+for (const title of ['Appartement 12', 'Symptome 3', 'Le Concert 5', 'Document 7', 'Syndrome 11']) {
+  check(`pas de serie dans "${title}"`, series.parseSeries(title), null)
+}
+
 check('libelle', series.seriesLabel('Dune', 2), 'Dune · tome 2')
 check('libelle sans tome', series.seriesLabel('Dune'), 'Dune')
 check('cle de regroupement', series.seriesKey('Le Trône de Fer'), series.seriesKey('le trone de fer'))

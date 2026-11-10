@@ -34,22 +34,34 @@ function toNumber(raw: string): number | undefined {
  *
  * Volontairement absent : « Titre, 3 ». Un nombre nu après une virgule est
  * bien plus souvent une date, un lieu ou une partie du titre qu'un tome.
+ *
+ * Le séparateur doit exister mais peut n'être qu'une espace : « Naruto t.33 »
+ * et « One Piece tome 5 » n'ont ni virgule ni tiret, et c'est la forme la plus
+ * répandue sur les tranches de manga.
+ *
+ * Il ne peut en revanche pas être vide, sinon le mot-clé serait cherché au
+ * milieu des mots : « Symptome 3 » donnerait la série « Symp » tome 3, et
+ * « Appartement 12 » la série « Appartemen ». Vérifié par les tests.
  */
+const SEP = '[\\s,\\-–—(]+'
+
 const PATTERNS: RegExp[] = [
-  // « Harry Potter, tome 3 » / « Harry Potter - Tome 3 » / « Harry Potter (tome 3) »
-  /^(.+?)\s*[,\-–—(]\s*tomes?\s*\.?\s*([0-9]{1,2}|[ivx]{1,5})\b\)?/i,
-  // « Le Trône de fer, T3 » / « ... T. 3 »
-  /^(.+?)\s*[,\-–—(]\s*t\.?\s*([0-9]{1,2})\b\)?/i,
-  // « Dune, volume 2 » / « ... vol. 2 »
-  /^(.+?)\s*[,\-–—(]\s*vol(?:ume)?s?\s*\.?\s*([0-9]{1,2}|[ivx]{1,5})\b\)?/i,
+  // « Harry Potter, tome 3 » / « Death Note - Tome 1 » / « Berserk (tome 2) »
+  new RegExp(`^(.+?)${SEP}tomes?\\s*\\.?\\s*([0-9]{1,3}|[ivx]{1,5})\\b\\)?`, 'i'),
+  // « Dune, volume 2 » / « Naruto vol. 5 »
+  new RegExp(`^(.+?)${SEP}vol(?:ume)?s?\\s*\\.?\\s*([0-9]{1,3}|[ivx]{1,5})\\b\\)?`, 'i'),
+  // « Naruto t.33 » / « Le Trône de fer, T3 »
+  new RegExp(`^(.+?)${SEP}t\\.?\\s*([0-9]{1,3})\\b\\)?`, 'i'),
+  // « One Piece nº 01 » / « Naruto n°12 » — numérotation des éditions
+  new RegExp(`^(.+?)${SEP}n[°ºo]\\s*\\.?\\s*([0-9]{1,3})\\b\\)?`, 'i'),
   // « Fondation, livre 2 » — « livre » seulement suivi d'un nombre
-  /^(.+?)\s*[,\-–—(]\s*livres?\s*\.?\s*([0-9]{1,2})\b\)?/i,
+  new RegExp(`^(.+?)${SEP}livres?\\s*\\.?\\s*([0-9]{1,3})\\b\\)?`, 'i'),
   // Anglais : « Dune, Book 2 »
-  /^(.+?)\s*[,\-–—(]\s*book\s*\.?\s*([0-9]{1,2})\b\)?/i,
+  new RegExp(`^(.+?)${SEP}book\\s*\\.?\\s*([0-9]{1,3})\\b\\)?`, 'i'),
   // « Lanfeust de Troy #3 »
-  /^(.+?)\s*#\s*([0-9]{1,2})\b/,
+  /^(.+?)\s*#\s*([0-9]{1,3})\b/,
   // « Titre, Cycle 2 »
-  /^(.+?)\s*[,\-–—(]\s*cycles?\s*\.?\s*([0-9]{1,2})\b\)?/i,
+  new RegExp(`^(.+?)${SEP}cycles?\\s*\\.?\\s*([0-9]{1,3})\\b\\)?`, 'i'),
 ]
 
 /** Nettoie un nom de série : ponctuation de fin, espaces, parenthèse ouverte. */
