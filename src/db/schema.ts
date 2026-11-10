@@ -42,6 +42,13 @@ export interface Book {
   source: MetadataSource
   sourceId?: string
 
+  /** Genre normalisé, déduit des sujets puis corrigeable à la main. */
+  genre?: string
+  /** Nom de la série, si le livre en fait partie. */
+  series?: string
+  /** Numéro de tome dans la série. */
+  seriesIndex?: number
+
   // Données saisies par l'utilisateur
   status: ReadingStatus
   rating?: number
@@ -78,6 +85,16 @@ class BookshelfDB extends Dexie {
     super('bookshelf')
     this.version(1).stores({
       books: 'id, isbn13, isbn10, title, status, updatedAt, deletedAt, dirty, publishedYear, *authors, *tags',
+      covers: 'bookId',
+      meta: 'key',
+    })
+
+    // Version 2 : genre et séries. Dexie applique la migration tout seul au
+    // premier lancement ; les livres existants gardent ces champs vides et
+    // seront renseignés par la complétion des fiches.
+    this.version(2).stores({
+      books:
+        'id, isbn13, isbn10, title, status, updatedAt, deletedAt, dirty, publishedYear, genre, series, *authors, *tags',
       covers: 'bookId',
       meta: 'key',
     })

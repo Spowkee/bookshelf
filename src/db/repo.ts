@@ -4,6 +4,8 @@ import { toCsv } from '../lib/csv'
 import { formatIsbn } from '../lib/isbn'
 import { languageLabel } from '../lib/language'
 import type { MappedRow } from '../lib/importMapping'
+import { deriveGenre } from '../lib/genre'
+import { parseSeries } from '../lib/series'
 
 const nowIso = () => new Date().toISOString()
 
@@ -17,6 +19,7 @@ function newId(): string {
 
 export function draftToBook(draft: BookDraft, status: ReadingStatus = 'read'): Book {
   const ts = nowIso()
+  const serie = parseSeries(draft.title)
   return {
     id: newId(),
     isbn13: draft.isbn13,
@@ -33,6 +36,9 @@ export function draftToBook(draft: BookDraft, status: ReadingStatus = 'read'): B
     coverUrl: draft.coverUrl,
     source: draft.source,
     sourceId: draft.sourceId,
+    genre: deriveGenre(draft.subjects, draft.title),
+    series: serie?.series,
+    seriesIndex: serie?.index,
     status,
     tags: [],
     finishedAt: status === 'read' ? ts.slice(0, 10) : undefined,
@@ -48,6 +54,29 @@ export function draftToBook(draft: BookDraft, status: ReadingStatus = 'read'): B
 export async function allBooks(): Promise<Book[]> {
   const books = await db.books.filter((b) => b.deletedAt === null).toArray()
   return books.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+/**
+ * Valeurs déjà employées dans la bibliothèque, pour les proposer en saisie.
+ *
+ * C'est ce qui évite d'avoir « policier », « Policier » et « polcier » comme
+ * trois tags distincts : on propose l'existant plutôt que de laisser retaper.
+ */
+export async function listSuggestions(): Promise<{ tags: string[]; series: string[] }> {
+  const books = await allBooks()
+  const tags = new Map<string, number>()
+  const series = new Set<string>()
+
+  for (const b of books) {
+    for (const t of b.tags) tags.set(t, (tags.get(t) ?? 0) + 1)
+    if (b.series) series.add(b.series)
+  }
+
+  return {
+    // Les tags les plus employés d'abord : ce sont ceux qu'on veut rajouter.
+    tags: [...tags.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fr')).map(([t]) => t),
+    series: [...series].sort((a, b) => a.localeCompare(b, 'fr')),
+  }
 }
 
 export async function getBook(id: string): Promise<Book | undefined> {
@@ -195,6 +224,7 @@ export async function exportJson(): Promise<ExportPayload> {
  */
 export const CSV_COLUMNS = [
   'Titre', 'Sous-titre', 'Auteurs', 'ISBN', 'Éditeur', 'Année', 'Pages', 'Langue',
+  'Genre', 'Série', 'Tome',
   'Statut', 'Note', 'Date de début', 'Date de fin', 'Tags', 'Notes', 'Résumé',
   'Source', 'Ajouté le',
 ]
@@ -210,6 +240,9 @@ export async function exportCsv(delimiter = ';'): Promise<string> {
     'Année': b.publishedYear ? String(b.publishedYear) : '',
     Pages: b.pageCount ? String(b.pageCount) : '',
     Langue: languageLabel(b.language) ?? '',
+    Genre: b.genre ?? '',
+    'Série': b.series ?? '',
+    Tome: b.seriesIndex ? String(b.seriesIndex) : '',
     Statut: STATUS_LABELS[b.status],
     Note: b.rating ? String(b.rating) : '',
     'Date de début': b.startedAt ?? '',
@@ -221,6 +254,32 @@ export async function exportCsv(delimiter = ';'): Promise<string> {
     'Ajouté le': b.createdAt.slice(0, 10),
   }))
   return toCsv(CSV_COLUMNS, rows, delimiter)
+}
+
+/**
+ * Date de la dernière sauvegarde exportée.
+ *
+ * iOS refuse quasi systématiquement le stockage persistant : la seule copie
+ * vraiment durable est un fichier sorti du navigateur. On garde donc trace du
+ * dernier export pour pouvoir alerter quand il date trop.
+ */
+const BACKUP_KEY = 'backup:last'
+
+export async function getLastBackup(): Promise<string | null> {
+  const row = await db.meta.get(BACKUP_KEY)
+  return (row?.value as string | undefined) ?? null
+}
+
+export async function markBackup(): Promise<void> {
+  await db.meta.put({ key: BACKUP_KEY, value: nowIso() })
+}
+
+/** Livres ajoutés ou modifiés depuis la dernière sauvegarde. */
+export async function changesSinceBackup(): Promise<number> {
+  const last = await getLastBackup()
+  if (!last) return (await allBooks()).length
+  const books = await db.books.toArray()
+  return books.filter((b) => b.updatedAt > last).length
 }
 
 export interface ImportResult {
@@ -346,6 +405,9 @@ export async function importForeignRows(
       language: row.language ?? draft?.language,
       description: row.description ?? draft?.description,
       subjects: draft?.subjects ?? [],
+      genre: row.genre ?? deriveGenre(draft?.subjects ?? [], row.title),
+      series: row.series ?? parseSeries(row.title)?.series,
+      seriesIndex: row.seriesIndex ?? parseSeries(row.title)?.index,
       coverUrl: draft?.coverUrl,
       source: draft ? draft.source : 'manual',
       sourceId: draft?.sourceId,
@@ -392,6 +454,7 @@ export interface Gaps {
   pageCount: boolean
   authors: boolean
   publisher: boolean
+  genre: boolean
 }
 
 export interface IncompleteBook {
@@ -432,13 +495,33 @@ async function saveAttempts(log: AttemptLog): Promise<void> {
   await db.meta.put({ key: ATTEMPTS_KEY, value: log })
 }
 
+/**
+ * Report de la proposition de complétion.
+ *
+ * Reproposer à chaque ouverture ce que l'utilisateur vient d'écarter est le
+ * meilleur moyen de faire ignorer la bannière pour de bon. « Plus tard »
+ * vaut donc une semaine de silence.
+ */
+const SNOOZE_KEY = 'refresh:snoozedUntil'
+
+export async function snoozeRefreshPrompt(days = 7): Promise<void> {
+  const until = new Date(Date.now() + days * 86400_000).toISOString()
+  await db.meta.put({ key: SNOOZE_KEY, value: until })
+}
+
+export async function isRefreshPromptSnoozed(): Promise<boolean> {
+  const row = await db.meta.get(SNOOZE_KEY)
+  const until = row?.value as string | undefined
+  return !!until && until > nowIso()
+}
+
 /** Oublie l'historique : tout redevient « jamais tenté ». */
 export async function clearAttempts(): Promise<void> {
   await db.meta.delete(ATTEMPTS_KEY)
 }
 
 export function isIncomplete(gaps: Gaps): boolean {
-  return gaps.cover || gaps.description || gaps.pageCount || gaps.authors || gaps.publisher
+  return gaps.cover || gaps.description || gaps.pageCount || gaps.authors || gaps.publisher || gaps.genre
 }
 
 /**
@@ -463,6 +546,7 @@ export async function findIncompleteBooks(): Promise<IncompleteBook[]> {
       pageCount: !book.pageCount,
       authors: book.authors.length === 0,
       publisher: !book.publisher,
+      genre: !book.genre,
     }
     if (!isIncomplete(gaps)) continue
     const past = attempts[book.id]
@@ -573,7 +657,7 @@ export async function refreshBooks(
     let draft: BookDraft | null = null
     // Inutile d'interroger les catalogues si seule la couverture manque :
     // les URL se construisent depuis l'ISBN sans aucune requête de métadonnées.
-    const needsMetadata = gaps.description || gaps.pageCount || gaps.authors || gaps.publisher
+    const needsMetadata = gaps.description || gaps.pageCount || gaps.authors || gaps.publisher || gaps.genre
     if (needsMetadata) {
       try {
         draft = await options.lookup(isbn)
@@ -592,6 +676,23 @@ export async function refreshBooks(
       if (!book.language && draft.language) changes.language = draft.language
       if (book.subjects.length === 0 && draft.subjects.length > 0) changes.subjects = draft.subjects
       if (!book.isbn13 && draft.isbn13) changes.isbn13 = draft.isbn13
+      if (gaps.genre) {
+        const genre = deriveGenre(
+          draft.subjects.length > 0 ? draft.subjects : book.subjects,
+          book.title,
+        )
+        if (genre) changes.genre = genre
+      }
+    }
+
+    // La serie se deduit du titre, sans reseau : on peut la combler meme quand
+    // les catalogues sont injoignables ou que le quota est epuise.
+    if (!book.series) {
+      const serie = parseSeries(book.title)
+      if (serie) {
+        changes.series = serie.series
+        if (serie.index) changes.seriesIndex = serie.index
+      }
     }
 
     if (gaps.cover) {
@@ -641,6 +742,7 @@ export async function refreshOne(book: Book, options: RefreshOptions): Promise<R
     pageCount: !book.pageCount,
     authors: book.authors.length === 0,
     publisher: !book.publisher,
+    genre: !book.genre,
   }
   // Pas de pause ni de journal : l'utilisateur attend devant son écran, et une
   // demande explicite ne doit pas être bloquée par « déjà tenté hier ».

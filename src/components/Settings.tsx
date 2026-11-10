@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { computeStats, coversSize, exportCsv, exportJson, importJson, type Stats } from '../db/repo'
+import {
+  changesSinceBackup,
+  computeStats,
+  coversSize,
+  exportCsv,
+  exportJson,
+  getLastBackup,
+  importJson,
+  markBackup,
+  type Stats,
+} from '../db/repo'
 import { STATUS_LABELS, STATUS_ORDER, type Book } from '../db/schema'
 import { ImportSheet } from './ImportSheet'
 import { RefreshSheet } from './RefreshSheet'
@@ -22,40 +32,86 @@ export function Settings({ books, onChanged }: Props) {
   const [message, setMessage] = useState<{ kind: 'info' | 'error'; text: string } | null>(null)
   const [foreignFile, setForeignFile] = useState<File | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [lastBackup, setLastBackup] = useState<string | null>(null)
+  const [pending, setPending] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void computeStats(books).then(setStats)
     void coversSize().then(setCovers)
     // L'API Storage donne l'occupation reelle de l'origine, couvertures incluses.
+    void getLastBackup().then(setLastBackup)
+    void changesSinceBackup().then(setPending)
     void navigator.storage?.estimate?.().then((e) => {
       if (e.usage != null && e.quota != null) setQuota({ usage: e.usage, quota: e.quota })
     })
   }, [books])
 
-  function download(content: string, filename: string, mime: string) {
-    const blob = new Blob([content], { type: mime })
-    const url = URL.createObjectURL(blob)
+  /**
+   * Sort un fichier du navigateur.
+   *
+   * Sur iPhone, `navigator.share` ouvre la feuille de partage : le fichier
+   * peut alors être enregistré dans Fichiers, iCloud Drive, Nextcloud ou
+   * envoyé par mail. C'est le seul moyen d'obtenir une copie qui survive à
+   * une purge du stockage du navigateur — qu'iOS refuse de rendre persistant.
+   * Ailleurs, on retombe sur un téléchargement classique.
+   */
+  async function saveFile(content: string, filename: string, mime: string) {
+    const file = new File([content], filename, { type: mime })
+
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: filename })
+        return true
+      } catch (e) {
+        // L'utilisateur a ferme la feuille de partage : ce n'est pas une erreur.
+        if (e instanceof DOMException && e.name === 'AbortError') return false
+      }
+    }
+
+    const url = URL.createObjectURL(file)
     const a = document.createElement('a')
     a.href = url
     a.download = filename
     a.click()
     URL.revokeObjectURL(url)
+    return true
   }
 
-  const stamp = () => new Date().toISOString().slice(0, 10)
+  /**
+   * Horodatage du nom de fichier : date ET heure.
+   *
+   * Chaque export crée un nouveau fichier, il n'écrase jamais le précédent —
+   * ni la feuille de partage iOS ni un téléchargement ne remplacent un fichier
+   * existant. Sans l'heure, deux sauvegardes le même jour donneraient
+   * « bookshelf-2026-11-10 (1).json », illisible. Avec, les fichiers se
+   * trient tout seuls et on garde un historique exploitable.
+   */
+  const stamp = () => {
+    const d = new Date()
+    const p2 = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}-${p2(d.getHours())}h${p2(d.getMinutes())}`
+  }
 
   async function doExportJson() {
     const payload = await exportJson()
-    download(JSON.stringify(payload, null, 2), `bookshelf-${stamp()}.json`, 'application/json')
-    setMessage({ kind: 'info', text: `${payload.books.length} livres exportés en JSON.` })
+    const saved = await saveFile(
+      JSON.stringify(payload, null, 2),
+      `bookshelf-${stamp()}.json`,
+      'application/json',
+    )
+    if (!saved) return
+    await markBackup()
+    setLastBackup(new Date().toISOString())
+    setPending(0)
+    setMessage({ kind: 'info', text: `${payload.books.length} livres sauvegardés.` })
   }
 
   async function doExportCsv(delimiter: ';' | ',') {
     const csv = await exportCsv(delimiter)
     // Le BOM UTF-8 est indispensable : sans lui, Excel lit le fichier en
     // ANSI et transforme tous les accents en charabia.
-    download('﻿' + csv, `bookshelf-${stamp()}.csv`, 'text/csv;charset=utf-8')
+    await saveFile('﻿' + csv, `bookshelf-${stamp()}.csv`, 'text/csv;charset=utf-8')
     setMessage({ kind: 'info', text: `${books.length} livres exportés en CSV.` })
   }
 
@@ -158,13 +214,31 @@ export function Settings({ books, onChanged }: Props) {
       </p>
 
       <div className="section-title">Sauvegarde</div>
+
+      {pending > 0 && (
+        <div className="banner banner-error">
+          <b>
+            {pending} livre{pending > 1 ? 's' : ''} non sauvegardé{pending > 1 ? 's' : ''}.
+          </b>{' '}
+          {lastBackup
+            ? `Dernière sauvegarde le ${new Date(lastBackup).toLocaleDateString('fr-FR')}.`
+            : "Aucune sauvegarde n'a encore été faite."}
+        </div>
+      )}
+      {pending === 0 && lastBackup && (
+        <div className="banner banner-info">
+          Sauvegardé le {new Date(lastBackup).toLocaleDateString('fr-FR')}. Rien de nouveau depuis.
+        </div>
+      )}
+
       <p className="small muted" style={{ marginTop: 0 }}>
-        Tes livres ne vivent que sur cet appareil. Exporte régulièrement : c'est ta seule copie de
-        secours, et c'est aussi ce qui te permettra de reprendre tes données ailleurs.
+        Tes livres ne vivent que sur cet appareil, et iOS refuse presque toujours de garantir leur
+        conservation. <b>Le fichier exporté est ta seule copie durable.</b> Sur iPhone, le bouton
+        ouvre la feuille de partage : enregistre-le dans Fichiers, iCloud Drive ou Nextcloud.
       </p>
       <div className="stack">
         <button className="btn btn-primary btn-block" onClick={doExportJson}>
-          Exporter en JSON ({books.length} livres)
+          Sauvegarder ({books.length} livres)
         </button>
         <div className="btn-pair">
           <button className="btn" onClick={() => doExportCsv(';')}>
@@ -188,6 +262,11 @@ export function Settings({ books, onChanged }: Props) {
           }}
         />
       </div>
+      <p className="tiny muted">
+        Chaque sauvegarde crée un <b>nouveau fichier</b> horodaté — la précédente n'est jamais
+        écrasée. Garde les deux ou trois dernières et supprime les plus vieilles : un export
+        corrompu ne doit pas pouvoir détruire le seul exemplaire valide.
+      </p>
       <p className="tiny muted">
         Le JSON conserve tout et se réimporte sans créer de doublons. Le CSV s'ouvre dans un tableur :
         prends la version « Excel FR » (point-virgule) pour qu'Excel range les colonnes correctement,

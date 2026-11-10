@@ -247,8 +247,7 @@ export function ImportSheet({ file, onClose, onDone }: Props) {
         </span>
       </label>
 
-      <div style={{ height: 16 }} />
-      <div className="row">
+      <div className="sheet-actions row">
         <button className="btn btn-ghost" onClick={onClose}>Annuler</button>
         <button className="btn btn-primary" style={{ flex: 1 }} onClick={runImport} disabled={mapped.length === 0}>
           Importer {mapped.length > 0 ? `${mapped.length} livre${mapped.length > 1 ? 's' : ''}` : ''}

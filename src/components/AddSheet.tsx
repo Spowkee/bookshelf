@@ -87,7 +87,7 @@ export function AddSheet({ draft, onClose, onAdded }: Props) {
         ))}
       </div>
 
-      <div className="row">
+      <div className="sheet-actions row">
         <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Annuler</button>
         <button className="btn btn-primary" style={{ flex: 1 }} onClick={save} disabled={saving}>
           {saving ? <span className="spinner" /> : 'Ajouter à ma bibliothèque'}

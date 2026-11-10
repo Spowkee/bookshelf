@@ -28,6 +28,9 @@ export type FieldKey =
   | 'finishedAt'
   | 'tags'
   | 'notes'
+  | 'genre'
+  | 'series'
+  | 'seriesIndex'
 
 export const FIELD_LABELS: Record<FieldKey, string> = {
   title: 'Titre',
@@ -44,11 +47,14 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
   finishedAt: 'Date de fin',
   tags: 'Tags',
   notes: 'Notes perso',
+  genre: 'Genre',
+  series: 'Série',
+  seriesIndex: 'Tome',
 }
 
 export const FIELD_ORDER: FieldKey[] = [
   'title', 'authors', 'isbn', 'status', 'rating',
-  'finishedAt', 'startedAt', 'tags', 'notes',
+  'finishedAt', 'startedAt', 'genre', 'series', 'seriesIndex', 'tags', 'notes',
   'publisher', 'publishedYear', 'pageCount', 'language', 'description',
 ]
 
@@ -87,7 +93,10 @@ const ALIASES: Record<FieldKey, string[]> = {
     'dateread', 'datefinished', 'datedefin', 'datefin', 'datedelecture', 'datelu', 'finishdate',
     'termine le', 'terminele', 'finlecture', 'lule',
   ],
-  tags: ['tags', 'etiquettes', 'categories', 'categorie', 'genres', 'genre', 'motscles', 'keywords', 'collection'],
+  seriesIndex: ['numerodetome', 'tome', 'volume', 'numerodevolume', 'seriesindex', 'volumenumber', 'numerodanslaserie'],
+  series: ['serie', 'series', 'saga', 'cycle', 'collection', 'nomdelaserie'],
+  genre: ['genre', 'genres', 'categorie', 'category', 'categories', 'rayon', 'type'],
+  tags: ['tags', 'etiquettes', 'motscles', 'keywords', 'motsclefs', 'libelles'],
   notes: ['myreview', 'commentaire', 'commentaires', 'avis', 'review', 'notesperso', 'remarques', 'notes'],
 }
 
@@ -313,6 +322,9 @@ export function parseIsbnCell(raw: string | undefined): { isbn13?: string; isbn1
 
 export interface MappedRow {
   title: string
+  genre?: string
+  series?: string
+  seriesIndex?: number
   authors: string[]
   isbn13?: string
   isbn10?: string
@@ -348,6 +360,9 @@ export function applyMapping(row: CsvRow, mapping: Mapping, defaultStatus: Readi
 
   return {
     title: title || `ISBN ${isbn.isbn13}`,
+    genre: get('genre')?.trim() || undefined,
+    series: get('series')?.trim() || undefined,
+    seriesIndex: parseInt10(get('seriesIndex')),
     authors: parseAuthors(get('authors')),
     isbn13: isbn.isbn13,
     isbn10: isbn.isbn10,

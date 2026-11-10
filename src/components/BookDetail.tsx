@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { STATUS_LABELS, STATUS_ORDER, type Book, type ReadingStatus } from '../db/schema'
-import { deleteBook, updateBook, refreshOne, setUserCover, removeCover, hasCover } from '../db/repo'
+import {
+  deleteBook,
+  updateBook,
+  refreshOne,
+  setUserCover,
+  removeCover,
+  hasCover,
+  listSuggestions,
+} from '../db/repo'
 import { SOURCE_LABELS, coverCandidates, lookupByIsbn } from '../api'
 import { formatIsbn } from '../lib/isbn'
 import { languageLabel } from '../lib/language'
+import { GENRES } from '../lib/genre'
+import { seriesLabel } from '../lib/series'
 import { BookCover } from './BookCover'
 import { IconRefresh } from './icons'
 import { downscaleImage } from '../lib/image'
@@ -20,14 +30,52 @@ export function BookDetail({ book, onClose, onChanged }: Props) {
   const [rating, setRating] = useState(book.rating ?? 0)
   const [notes, setNotes] = useState(book.notes ?? '')
   const [tagText, setTagText] = useState(book.tags.join(', '))
+  const [genre, setGenre] = useState(book.genre ?? '')
+  const [series, setSeries] = useState(book.series ?? '')
+  const [seriesIndex, setSeriesIndex] = useState(book.seriesIndex ? String(book.seriesIndex) : '')
   const [startedAt, setStartedAt] = useState(book.startedAt ?? '')
   const [finishedAt, setFinishedAt] = useState(book.finishedAt ?? '')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [newTag, setNewTag] = useState('')
+  const [newTagOpen, setNewTagOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null)
   const [coverKey, setCoverKey] = useState(0)
   const [ownCover, setOwnCover] = useState(false)
   const photoRef = useRef<HTMLInputElement>(null)
+  const [suggestions, setSuggestions] = useState<{ tags: string[]; series: string[] }>({
+    tags: [],
+    series: [],
+  })
+
+  useEffect(() => {
+    void listSuggestions().then(setSuggestions)
+  }, [])
+
+  const currentTags = tagText.split(',').map((t) => t.trim()).filter(Boolean)
+
+  // Les suggestions déjà portées par le livre sont retirées de la liste :
+  // elles figurent au-dessus, avec leur croix de retrait.
+  const unusedSuggestions = suggestions.tags.filter((t) => !currentTags.includes(t))
+
+  function toggleTag(tag: string) {
+    const next = currentTags.includes(tag)
+      ? currentTags.filter((t) => t !== tag)
+      : [...currentTags, tag]
+    setTagText(next.join(', '))
+  }
+
+  function addNewTag() {
+    const value = newTag.trim().replace(/,/g, ' ')
+    if (!value) return
+    // Si le tag existe déjà à la casse près, on reprend l'orthographe en place
+    // plutôt que d'en créer une variante.
+    const existing = suggestions.tags.find((t) => t.toLowerCase() === value.toLowerCase())
+    const tag = existing ?? value
+    if (!currentTags.includes(tag)) setTagText([...currentTags, tag].join(', '))
+    setNewTag('')
+    setNewTagOpen(false)
+  }
 
   useEffect(() => {
     void hasCover(book.id).then(setOwnCover)
@@ -64,6 +112,9 @@ export function BookDetail({ book, onClose, onChanged }: Props) {
         rating: rating || undefined,
         notes: notes.trim() || undefined,
         tags: tagText.split(',').map((t) => t.trim()).filter(Boolean),
+        genre: genre || undefined,
+        series: series.trim() || undefined,
+        seriesIndex: seriesIndex ? Number(seriesIndex) : undefined,
         startedAt: startedAt || undefined,
         finishedAt: finishedAt || undefined,
       })
@@ -106,6 +157,12 @@ export function BookDetail({ book, onClose, onChanged }: Props) {
           {book.subtitle && <p className="small muted" style={{ margin: '0 0 6px' }}>{book.subtitle}</p>}
           <p className="authors">{book.authors.join(', ') || 'Auteur inconnu'}</p>
           <div className="chips">
+            {book.series && (
+              <span className="chip chip-static">
+                {seriesLabel(book.series, book.seriesIndex)}
+              </span>
+            )}
+            {book.genre && <span className="chip chip-static">{book.genre}</span>}
             {book.publishedYear && <span className="chip chip-static">{book.publishedYear}</span>}
             {book.pageCount && <span className="chip chip-static">{book.pageCount} p.</span>}
             {book.language && <span className="chip chip-static">{languageLabel(book.language)}</span>}
@@ -154,13 +211,109 @@ export function BookDetail({ book, onClose, onChanged }: Props) {
         </div>
       </div>
 
+      <div className="section-title">Genre</div>
+      <select className="input" value={genre} onChange={(e) => setGenre(e.target.value)}>
+        <option value="">— non classé —</option>
+        {GENRES.map((g) => (
+          <option key={g} value={g}>{g}</option>
+        ))}
+        {genre && !(GENRES as readonly string[]).includes(genre) && (
+          <option value={genre}>{genre}</option>
+        )}
+      </select>
+
+      <div className="section-title">Série</div>
+      <div className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+        <input
+          className="input"
+          style={{ flex: 1 }}
+          list="known-series"
+          value={series}
+          onChange={(e) => setSeries(e.target.value)}
+          placeholder="Le Trône de fer"
+        />
+        <datalist id="known-series">
+          {suggestions.series.map((v) => (
+            <option key={v} value={v} />
+          ))}
+        </datalist>
+        <input
+          className="input"
+          style={{ width: 92 }}
+          type="number"
+          min="1"
+          inputMode="numeric"
+          value={seriesIndex}
+          onChange={(e) => setSeriesIndex(e.target.value)}
+          placeholder="Tome"
+          aria-label="Numéro de tome"
+        />
+      </div>
+      {series && (
+        <p className="tiny muted">{seriesLabel(series, seriesIndex ? Number(seriesIndex) : undefined)}</p>
+      )}
+
       <div className="section-title">Mes tags</div>
-      <input
-        className="input"
-        value={tagText}
-        onChange={(e) => setTagText(e.target.value)}
-        placeholder="polar, à relire, offert par Marie"
-      />
+
+      {/* La liste d'abord : choisir dans l'existant est le geste courant, et
+          c'est ce qui empêche « polar », « Polar » et « polard » de coexister.
+          La saisie libre reste accessible, mais en second rideau. */}
+      {currentTags.length > 0 && (
+        <div className="chips" style={{ marginBottom: 10 }}>
+          {currentTags.map((t) => (
+            <button key={t} className="chip" aria-pressed onClick={() => toggleTag(t)}>
+              {t} ✕
+            </button>
+          ))}
+        </div>
+      )}
+
+      {unusedSuggestions.length > 0 && (
+        <>
+          <p className="tiny muted" style={{ margin: '0 0 6px' }}>
+            Tags déjà utilisés — appuie pour ajouter :
+          </p>
+          <div className="chips">
+            {unusedSuggestions.slice(0, 18).map((t) => (
+              <button key={t} className="chip" onClick={() => toggleTag(t)}>
+                {t}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {newTagOpen ? (
+        <div className="row" style={{ marginTop: 10 }}>
+          <input
+            className="input"
+            value={newTag}
+            autoFocus
+            onChange={(e) => setNewTag(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addNewTag()
+              }
+            }}
+            placeholder="offert par Marie"
+          />
+          <button className="btn btn-primary" onClick={addNewTag} disabled={!newTag.trim()}>
+            Ajouter
+          </button>
+          <button className="btn btn-ghost" onClick={() => setNewTagOpen(false)} aria-label="Annuler">
+            ✕
+          </button>
+        </div>
+      ) : (
+        <button
+          className="btn btn-ghost"
+          style={{ marginTop: 10, paddingLeft: 0 }}
+          onClick={() => setNewTagOpen(true)}
+        >
+          + Créer un tag
+        </button>
+      )}
 
       <div className="section-title">Mes notes</div>
       <textarea

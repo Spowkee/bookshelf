@@ -33,6 +33,8 @@ function compile(name, rel) {
 compile('isbn', 'lib/isbn.ts')
 compile('language', 'lib/language.ts')
 compile('csv', 'lib/csv.ts')
+compile('genre', 'lib/genre.ts')
+compile('series', 'lib/series.ts')
 compile('importMapping', 'lib/importMapping.ts')
 
 // schema.ts tire Dexie, inutile ici : seules les constantes sont referencees.
@@ -41,6 +43,8 @@ writeFileSync(join(out, 'schema.mjs'), 'export const STATUS_LABELS={};export con
 const csv = await import(pathToFileURL(join(out, 'csv.mjs')).href)
 const map = await import(pathToFileURL(join(out, 'importMapping.mjs')).href)
 const lang = await import(pathToFileURL(join(out, 'language.mjs')).href)
+const genre = await import(pathToFileURL(join(out, 'genre.mjs')).href)
+const series = await import(pathToFileURL(join(out, 'series.mjs')).href)
 
 let pass = 0
 const failures = []
@@ -99,12 +103,16 @@ check('goodreads: date de fin', goodreads.finishedAt, 'Date Read')
 
 const fr = map.autoMap([
   'Titre', 'Auteur', 'ISBN', 'Éditeur', 'Année', 'Nombre de pages', 'Statut',
-  'Ma note', 'Date de fin', 'Catégories', 'Commentaire',
+  'Ma note', 'Date de fin', 'Catégories', 'Série', 'Tome', 'Mots-clés', 'Commentaire',
 ])
 check('fr: titre', fr.title, 'Titre')
 check('fr: editeur accentue', fr.publisher, 'Éditeur')
 check('fr: pages', fr.pageCount, 'Nombre de pages')
-check('fr: tags', fr.tags, 'Catégories')
+// « Catégories » designe un genre bien plus souvent qu'une liste de tags libres.
+check('fr: genre', fr.genre, 'Catégories')
+check('fr: serie', fr.series, 'Série')
+check('fr: tome', fr.seriesIndex, 'Tome')
+check('fr: tags', fr.tags, 'Mots-clés')
 check('fr: notes perso', fr.notes, 'Commentaire')
 
 // ---------------------------------------------------------- normalisations
@@ -176,6 +184,49 @@ check('date', row.finishedAt, '2023-03-12')
 check('pages', row.pageCount, 191)
 
 check('ligne sans titre ni isbn ignoree', map.applyMapping({ Title: '' }, { title: 'Title' }, 'read'), null)
+
+section('Genres déduits des sujets')
+for (const [subjects, expected] of [
+  [['Detective and mystery stories', 'Fiction'], 'Policier'],
+  [['Science fiction', 'Space opera'], 'Science-fiction'],
+  [['Fiction', 'Philosophical novels'], 'Philosophie'],
+  [['Bandes dessinées'], 'Bande dessinée'],
+  [['Manga', 'Comics'], 'Manga'],
+  [['Cooking', 'Recettes'], 'Cuisine'],
+  [['Biography & Autobiography'], 'Biographie'],
+  [['Juvenile Fiction'], 'Jeunesse'],
+  [['Fiction'], 'Roman'],
+  [[], undefined],
+  [['Quelque chose de totalement inconnu'], undefined],
+]) {
+  check(`genre ${JSON.stringify(subjects)}`, genre.deriveGenre(subjects), expected)
+}
+// L'ordre des sujets ne doit rien changer
+check(
+  'ordre des sujets indifferent',
+  genre.deriveGenre(['Fiction', 'Detective']),
+  genre.deriveGenre(['Detective', 'Fiction']),
+)
+
+section('Séries et tomes')
+for (const [title, expected] of [
+  ['Harry Potter, tome 3', { series: 'Harry Potter', index: 3 }],
+  ['Le Trône de fer - Tome 5', { series: 'Le Trône de fer', index: 5 }],
+  ['Dune (tome 2)', { series: 'Dune', index: 2 }],
+  ['Fondation, T3', { series: 'Fondation', index: 3 }],
+  ['Les Thanatonautes, volume 2', { series: 'Les Thanatonautes', index: 2 }],
+  ['Lanfeust de Troy #3', { series: 'Lanfeust de Troy', index: 3 }],
+  ['Le Seigneur des anneaux, tome II', { series: 'Le Seigneur des anneaux', index: 2 }],
+  ['Dune, Book 2', { series: 'Dune', index: 2 }],
+  ['L\'Étranger', null],
+  ['Paris, 1900', null],
+  ['Vingt mille lieues sous les mers', null],
+]) {
+  check(`serie "${title}"`, series.parseSeries(title), expected)
+}
+check('libelle', series.seriesLabel('Dune', 2), 'Dune · tome 2')
+check('libelle sans tome', series.seriesLabel('Dune'), 'Dune')
+check('cle de regroupement', series.seriesKey('Le Trône de Fer'), series.seriesKey('le trone de fer'))
 
 // ---------------------------------------------------------------- resultat
 

@@ -103,10 +103,11 @@ export function RefreshSheet({ onClose, onDone }: Props) {
           <div className="progress-bar" style={{ width: `${pct}%` }} />
         </div>
         <p className="refresh-now">{progress.title}</p>
-        <div style={{ height: 14 }} />
-        <button className="btn btn-block" onClick={() => abortRef.current?.abort()}>
-          Arrêter
-        </button>
+        <div className="sheet-actions">
+          <button className="btn btn-block" onClick={() => abortRef.current?.abort()}>
+            Arrêter
+          </button>
+        </div>
         <p className="tiny muted center">
           Ce qui a déjà été complété est conservé.
         </p>
@@ -141,8 +142,9 @@ export function RefreshSheet({ onClose, onDone }: Props) {
         </div>
         {result.stoppedByQuota ? (
           <div className="banner banner-info">
-            <b>Arrêté : Google a atteint sa limite de requêtes.</b> Ce n'est pas une erreur, le
-            quota est compté par connexion et se renouvelle tout seul. Il reste{' '}
+            <b>Arrêté : Google a atteint sa limite de requêtes.</b> Ce n'est pas une erreur. Le
+            quota est compté par adresse réseau — pas par compte — et se renouvelle de lui-même
+            après quelques minutes à quelques heures. Il reste{' '}
             {result.remaining} livre{result.remaining > 1 ? 's' : ''} à traiter — relance dans{' '}
             {googleThrottleMinutesLeft()} minutes, ou demain. L'app reprendra exactement là où elle
             s'est arrêtée, sans refaire ce qui est déjà fait.
@@ -154,10 +156,11 @@ export function RefreshSheet({ onClose, onDone }: Props) {
             photographier la couverture depuis leur fiche.
           </p>
         )}
-        <div style={{ height: 14 }} />
-        <button className="btn btn-primary btn-block" onClick={() => onDone(result)}>
-          Fermer
-        </button>
+        <div className="sheet-actions">
+          <button className="btn btn-primary btn-block" onClick={() => onDone(result)}>
+            Fermer
+          </button>
+        </div>
       </Sheet>
     )
   }
@@ -216,10 +219,11 @@ export function RefreshSheet({ onClose, onDone }: Props) {
             </div>
           )}
 
-          <div style={{ height: 8 }} />
-          <button className="btn btn-primary btn-block" onClick={run}>
-            Compléter {targets.length} fiche{targets.length > 1 ? 's' : ''}
-          </button>
+          <div className="sheet-actions">
+            <button className="btn btn-primary btn-block" onClick={run}>
+              Compléter {targets.length} fiche{targets.length > 1 ? 's' : ''}
+            </button>
+          </div>
         </>
       )}
     </Sheet>

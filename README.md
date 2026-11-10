@@ -10,7 +10,7 @@ C'est une application web installable sur l'écran d'accueil, qui fonctionne hor
 
 ## Sur iPhone
 
-1. Ouvrir l'adresse de l'app **dans Safari**. Chrome et Firefox sur iOS ne savent pas installer ce type d'application — iOS leur interdit cette fonction.
+1. Ouvrir l'adresse de l'app **dans Safari**. Chrome et Firefox sur iOS ne savent pas installer ce type d'application : iOS réserve cette fonction à Safari, et aucune version ne changera ça.
 2. Appuyer sur le bouton **Partager** (le carré avec une flèche, en bas de l'écran).
 3. Faire défiler la liste, choisir **« Sur l'écran d'accueil »**.
 4. Valider.
@@ -20,6 +20,29 @@ L'icône apparaît parmi tes applications. Au lancement, pas de barre d'adresse 
 ## Sur Android
 
 Chrome propose **« Installer l'application »** dès la première visite. Si la bannière a disparu : menu **⋮** → **« Installer l'application »**.
+
+## Avec Firefox
+
+Ça dépend de l'appareil, et la différence n'est pas une question de version mais de ce que chaque système autorise.
+
+**Firefox sur Android : oui.** Menu **⋮** → **« Installer »** (ou « Ajouter à l'écran d'accueil » selon la version). L'app s'installe et se lance en plein écran, exactement comme avec Chrome.
+
+**Firefox sur iPhone : non, et ce n'est pas réparable.** iOS réserve l'installation d'applications web à Safari — tous les autres navigateurs en sont privés par le système. L'app fonctionnera très bien dans un onglet Firefox, mais sans icône sur l'écran d'accueil ni mode plein écran. Pour l'installer sur iPhone, il faut passer par Safari.
+
+**Firefox sur ordinateur : non plus.** Mozilla a retiré l'installation d'applications web en 2021 et n'a pas annoncé de retour. L'app reste parfaitement utilisable dans un onglet — bibliothèque, recherche, import, export, tout marche — simplement sans icône dédiée.
+
+Une remarque qui vaut pour tous les Firefox : le **scanner y est un peu plus lent** que sur Chrome. Firefox n'expose pas l'API de décodage native du système, l'app bascule donc sur son moteur de secours — le même que sur iPhone. Le décodage reste fiable, il demande juste une fraction de seconde de plus et un téléchargement supplémentaire au premier scan.
+
+## Récapitulatif
+
+| Navigateur | Installation | Scanner |
+|---|---|---|
+| Safari (iPhone) | ✅ Partager → Sur l'écran d'accueil | moteur de secours |
+| Chrome (Android) | ✅ proposée automatiquement | décodage natif, le plus rapide |
+| Firefox (Android) | ✅ menu ⋮ → Installer | moteur de secours |
+| Firefox (iPhone) | ❌ interdit par iOS | fonctionne dans l'onglet |
+| Firefox (ordinateur) | ❌ retiré par Mozilla | fonctionne dans l'onglet |
+| Chrome / Edge (ordinateur) | ✅ icône dans la barre d'adresse | décodage natif |
 
 ## Au premier scan
 
