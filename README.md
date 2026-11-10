@@ -137,72 +137,10 @@ Chaque appareil garde sa propre bibliothèque — il n'y a pas de synchronisatio
 
 ---
 
-# Comment ça marche
-
-## Les sources de métadonnées
-
-Trois catalogues, interrogés dans cet ordre :
-
-| Source | Apport |
-|---|---|
-| **Open Library** (Internet Archive) | données bibliographiques, couvertures libres |
-| **Google Books** | résumés, pagination des éditions récentes |
-| **BnF** (catalogue général) | édition française ancienne ou confidentielle |
-
-Pour une recherche par ISBN, **Open Library et Google sont interrogés en parallèle puis fusionnés**, pas en cascade : leurs lacunes ne se recouvrent pas, et deux requêtes simultanées coûtent le même temps qu'une seule tout en donnant une fiche nettement plus complète. La BnF n'intervient que si les deux premières ne trouvent rien.
-
-Trois particularités de ces services, mesurées et contournées :
-
-- **La BnF indexe les ISBN-10, pas les ISBN-13.** Chercher `9782070360024` ne renvoie rien là où `2070360024` renvoie la notice. L'app convertit avant d'interroger.
-- **Open Library annonce parfois « pas de couverture » alors que l'image existe** sur son serveur d'images. L'app essaie systématiquement l'URL construite depuis l'ISBN, puis plusieurs tailles, puis la vignette Google, puis l'ISBN-10.
-- **Google limite les requêtes par adresse IP.** Si la limite est atteinte, l'app continue de fonctionner avec les autres sources ; seuls les résumés manquent.
-
-## Le scanner
-
-Deux moteurs de décodage, choisis automatiquement selon le navigateur :
-
-- l'**API native** du navigateur sur Android — décodage par le système, quasi gratuit en énergie ;
-- **ZXing compilé en WebAssembly** sur iPhone, Safari n'ayant pas d'API native.
-
-Le moteur WebAssembly pèse ~940 Ko. Il n'est téléchargé qu'au premier scan sur les appareils qui en ont besoin, puis conservé : Android ne le télécharge jamais. Seule la bande centrale visée est analysée, réduite à 640 px de large — dix fois moins de calcul, sans perte de fiabilité.
-
-## Le stockage
-
-Tout vit dans la base de données locale du navigateur (IndexedDB), sur l'appareil.
-
-Les **couvertures sont copiées en dur** au moment de l'ajout plutôt que rechargées depuis internet : c'est ce qui permet de consulter sa bibliothèque en mode avion, et de ne pas dépendre de la disponibilité d'un service tiers. Compter environ 20 Ko par couverture, soit ~10 Mo pour 500 livres.
-
-L'app elle-même est mise en cache à l'installation : elle démarre et fonctionne sans réseau. Seuls l'ajout d'un nouveau livre et la complétion des fiches nécessitent une connexion — il faut bien interroger les catalogues.
-
-## Le modèle de données
-
-Un livre réunit trois familles d'informations :
-
-**Ce qui vient des catalogues** — titre, sous-titre, auteurs, éditeur, année, pagination, langue, résumé, sujets, ISBN, couverture.
-
-**Ce que tu saisis** — état de lecture, note sur 5, dates de début et de fin, tags, notes personnelles. Ces champs ne sont **jamais** écrasés par une mise à jour depuis les catalogues.
-
-**Quatre champs techniques**, invisibles, qui ne servent à rien aujourd'hui mais préparent une éventuelle synchronisation entre appareils :
-
-| Champ | Rôle |
-|---|---|
-| `createdAt` | date d'ajout |
-| `updatedAt` | départage les conflits : la version la plus récente gagne |
-| `deletedAt` | une suppression marque la ligne au lieu de l'effacer |
-| `dirty` | la ligne n'a pas encore été transmise |
-
-Le troisième est le plus important. Sans lui, un livre supprimé sur un appareil « ressusciterait » à la première synchronisation avec un autre appareil qui l'a encore en mémoire. C'est déjà la règle appliquée à l'import : réimporter un fichier ne crée pas de doublons, et un livre n'est remplacé que si la version importée est plus récente.
-
-## Et la synchronisation ?
-
-Volontairement absente. Elle demanderait un serveur, donc un coût mensuel et de la maintenance, pour un besoin que l'export/import JSON couvre déjà. Le modèle de données est prêt : elle pourra être ajoutée plus tard sans rien casser ni migrer.
-
----
-
 # Ce que l'app ne fait pas
 
 - **Pas de gestion des séries ni des tomes** : chaque tome est un livre comme un autre.
-- **La recherche par titre n'interroge pas la BnF**, seulement Open Library et Google Books. La BnF sert de recours par ISBN : en recherche libre, sa pertinence est faible et ses notices n'ont pas d'images.
+- **La recherche par titre n'interroge pas le catalogue de la BnF**, qui ne sert qu'en dernier recours à partir d'un ISBN : en recherche libre, ses résultats sont trop nombreux et ses notices n'ont pas d'images.
 - **Pas de prêt ni d'emprunt** : aucun suivi de qui a quel livre.
 - **Pas de lecture de livres numériques** : c'est un journal, pas une liseuse.
 
@@ -218,4 +156,4 @@ Métadonnées fournies par [Open Library](https://openlibrary.org) (Internet Arc
 
 ---
 
-*Développement, tests et déploiement : voir [DEVELOPMENT.md](DEVELOPMENT.md).*
+*Vous cherchez le fonctionnement interne — choix techniques, modèle de données, stockage, déploiement ? C'est dans [DEVELOPMENT.md](DEVELOPMENT.md).*

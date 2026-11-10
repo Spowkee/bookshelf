@@ -71,6 +71,23 @@ export interface Cover {
   fetchedAt: string
 }
 
+/**
+ * Copie de sauvegarde conservée dans l'app.
+ *
+ * À ne pas confondre avec le fichier exporté : celui-ci part hors du
+ * navigateur et devient inaccessible à l'app. Un instantané, lui, reste
+ * consultable, restaurable et supprimable depuis les réglages. Il protège des
+ * fausses manœuvres — une suppression de masse, un import raté — mais pas de
+ * la perte du téléphone, puisqu'il vit dans le même stockage.
+ */
+export interface Snapshot {
+  id: string
+  at: string
+  books: number
+  bytes: number
+  payload: string
+}
+
 export interface MetaEntry {
   key: string
   value: unknown
@@ -80,6 +97,7 @@ class BookshelfDB extends Dexie {
   books!: EntityTable<Book, 'id'>
   covers!: EntityTable<Cover, 'bookId'>
   meta!: EntityTable<MetaEntry, 'key'>
+  snapshots!: EntityTable<Snapshot, 'id'>
 
   constructor() {
     super('bookshelf')
@@ -89,6 +107,9 @@ class BookshelfDB extends Dexie {
       meta: 'key',
     })
 
+    // Version 3 : instantanés de sauvegarde conservés dans l'app.
+    // (déclarée après la v2 ci-dessous, Dexie applique les versions en ordre)
+
     // Version 2 : genre et séries. Dexie applique la migration tout seul au
     // premier lancement ; les livres existants gardent ces champs vides et
     // seront renseignés par la complétion des fiches.
@@ -97,6 +118,14 @@ class BookshelfDB extends Dexie {
         'id, isbn13, isbn10, title, status, updatedAt, deletedAt, dirty, publishedYear, genre, series, *authors, *tags',
       covers: 'bookId',
       meta: 'key',
+    })
+
+    this.version(3).stores({
+      books:
+        'id, isbn13, isbn10, title, status, updatedAt, deletedAt, dirty, publishedYear, genre, series, *authors, *tags',
+      covers: 'bookId',
+      meta: 'key',
+      snapshots: 'id, at',
     })
   }
 }

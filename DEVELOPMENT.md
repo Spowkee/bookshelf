@@ -1,6 +1,8 @@
 # Développement
 
-Documentation technique. Pour l'installation et l'usage de l'app, voir [README.md](README.md).
+Documentation technique : choix d'architecture, modèle de données, stockage, particularités des services interrogés, tests et déploiement.
+
+Pour installer et utiliser l'app, voir [README.md](README.md).
 
 ---
 
@@ -112,14 +114,60 @@ Le binaire ZXing pèse ~940 Ko. Il est **exclu du précache** (`globPatterns` da
 
 Sur le chemin WebAssembly, seule la bande centrale (45 % de la hauteur) est décodée, redimensionnée à 640 px de large — environ dix fois moins de calcul par image, sans perte de fiabilité sur un EAN-13.
 
-## Modèle de données
+## Stockage
 
-Voir la section « Le modèle de données » du [README](README.md#le-modèle-de-données) pour le rôle de `createdAt` / `updatedAt` / `deletedAt` / `dirty`.
+Tout vit dans IndexedDB via Dexie, sur l'appareil. Quatre tables :
+
+| Table | Contenu | Clé |
+|---|---|---|
+| `books` | les livres | `id` (UUID client) |
+| `covers` | les couvertures en blob | `bookId` |
+| `meta` | compteurs, journaux, dates | `key` |
+| `snapshots` | copies de sauvegarde (3 max) | `id` |
+
+Les **couvertures sont copiées en dur** au moment de l'ajout plutôt que rechargées depuis le réseau : c'est ce qui rend la bibliothèque consultable hors-ligne et supprime toute dépendance à la disponibilité d'Open Library. Compter ~20 Ko par couverture, soit ~10 Mo pour 500 livres. Une couverture photographiée par l'utilisateur passe par `lib/image.ts`, qui la ramène à 600 px — une photo brute de 4 Mo saturerait le quota en cinquante livres.
+
+Les `id` sont générés côté client (`crypto.randomUUID`) et non par une séquence : une synchronisation future doit pouvoir fusionner des livres créés hors-ligne sur deux appareils sans collision d'identifiants.
 
 Deux contraintes d'IndexedDB à garder en tête :
 
 - **les booléens ne sont pas indexables**, d'où `dirty: 0 | 1` ;
 - **les blobs survivent aux rechargements** mais chaque `URL.createObjectURL` doit être révoqué, sinon le défilement de la grille fuit quelques Mo par écran (voir `BookCover.tsx`).
+
+Les migrations sont déclarées en versions Dexie successives (`schema.ts`) et s'appliquent au premier lancement : v1 initiale, v2 genre et séries, v3 instantanés.
+
+## Modèle de données
+
+Un livre réunit trois familles de champs, qui n'obéissent pas aux mêmes règles.
+
+**Les métadonnées des catalogues** — titre, sous-titre, auteurs, éditeur, année, pagination, langue, résumé, sujets, ISBN, couverture, genre, série, tome. Complétables automatiquement, mais **jamais écrasées** : `refreshBooks()` ne remplit que les champs vides.
+
+**Les données de l'utilisateur** — statut, note, dates de lecture, tags, notes personnelles. Aucun traitement automatique n'y touche.
+
+**Quatre champs de synchronisation**, inertes aujourd'hui mais présents dès l'origine pour qu'une synchro multi-appareils soit ajoutable sans migration :
+
+| Champ | Rôle |
+|---|---|
+| `createdAt` | date d'ajout |
+| `updatedAt` | départage les conflits : la version la plus récente gagne |
+| `deletedAt` | tombstone : une suppression marque la ligne au lieu de l'effacer |
+| `dirty` | la ligne n'a pas encore été transmise au serveur |
+
+Le tombstone est le point critique. Sans lui, un livre supprimé sur l'appareil A « ressusciterait » à la première synchronisation avec l'appareil B, qui l'a encore en base. `purgeTombstones()` ne les élague qu'après transmission confirmée.
+
+Cette règle est déjà appliquée par l'import : réimporter un fichier ne crée pas de doublons, et un livre n'est remplacé que si la version importée porte un `updatedAt` plus récent. C'est exactement l'algorithme qu'exécutera la synchro.
+
+## Les sources de métadonnées
+
+| Source | Apport | Limite |
+|---|---|---|
+| **Open Library** | données bibliographiques, couvertures libres (CC0) | ~50 % des ISBN français illustrés |
+| **Google Books** | résumés, pagination des éditions récentes | quota par IP, 429 fréquents sans clé |
+| **BnF** (SRU) | édition française ancienne ou confidentielle | aucune image, index ISBN-10 |
+
+Pour une recherche par ISBN, Open Library et Google sont interrogés **en parallèle puis fusionnés**, pas en cascade : leurs lacunes ne se recouvrent pas, et deux requêtes simultanées coûtent le même temps qu'une seule tout en donnant une fiche nettement plus complète. La BnF n'intervient qu'en troisième recours.
+
+Toute sortie réseau passe par `fetchWithTimeout` (`lib/timeout.ts`), 9 s par défaut. Sans ce garde-fou, un catalogue qui accepte la connexion puis ne répond jamais — comportement courant d'un serveur qui limite le débit au lieu de renvoyer une erreur — fige la boucle appelante indéfiniment.
 
 ---
 

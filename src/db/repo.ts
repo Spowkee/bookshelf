@@ -1,4 +1,4 @@
-import { db, STATUS_LABELS, type Book, type ReadingStatus } from './schema'
+import { db, STATUS_LABELS, type Book, type ReadingStatus, type Snapshot } from './schema'
 import type { BookDraft } from '../api/types'
 import { toCsv } from '../lib/csv'
 import { formatIsbn } from '../lib/isbn'
@@ -271,8 +271,82 @@ export async function getLastBackup(): Promise<string | null> {
   return (row?.value as string | undefined) ?? null
 }
 
+const BACKUP_COUNT_KEY = 'backup:count'
+
+/** Nombre total de sauvegardes effectuées depuis l'installation. */
+export async function getBackupCount(): Promise<number> {
+  const row = await db.meta.get(BACKUP_COUNT_KEY)
+  return (row?.value as number | undefined) ?? 0
+}
+
 export async function markBackup(): Promise<void> {
+  const count = await getBackupCount()
   await db.meta.put({ key: BACKUP_KEY, value: nowIso() })
+  await db.meta.put({ key: BACKUP_COUNT_KEY, value: count + 1 })
+}
+
+// ------------------------------------------------------------- instantanés
+
+/**
+ * Nombre d'instantanés conservés.
+ *
+ * Trois suffisent : ils servent à revenir sur une fausse manœuvre récente, pas
+ * à tenir un historique. Au-delà, on occupe le stockage du navigateur — celui
+ * qu'iOS peut justement purger — pour des copies qu'on ne consultera jamais.
+ */
+const MAX_SNAPSHOTS = 3
+
+/**
+ * Conserve une copie de la sauvegarde dans l'app, et élague les plus anciennes.
+ *
+ * Ne remplace pas l'export : un instantané vit dans le même stockage que les
+ * données qu'il protège, il ne survivrait donc ni à une purge du navigateur ni
+ * à la perte du téléphone. Il rattrape les erreurs, pas les accidents.
+ */
+export async function saveSnapshot(payloadJson: string, books: number): Promise<void> {
+  const snapshot: Snapshot = {
+    id: newId(),
+    at: nowIso(),
+    books,
+    bytes: new Blob([payloadJson]).size,
+    payload: payloadJson,
+  }
+
+  await db.transaction('rw', db.snapshots, async () => {
+    await db.snapshots.add(snapshot)
+    const all = await db.snapshots.orderBy('at').reverse().toArray()
+    const doomed = all.slice(MAX_SNAPSHOTS).map((x) => x.id)
+    if (doomed.length > 0) await db.snapshots.bulkDelete(doomed)
+  })
+}
+
+export type SnapshotInfo = Omit<Snapshot, 'payload'>
+
+export async function listSnapshots(): Promise<SnapshotInfo[]> {
+  const all = await db.snapshots.orderBy('at').reverse().toArray()
+  return all.map(({ payload: _payload, ...info }) => info)
+}
+
+export async function getSnapshotPayload(id: string): Promise<string | undefined> {
+  return (await db.snapshots.get(id))?.payload
+}
+
+export async function deleteSnapshot(id: string): Promise<void> {
+  await db.snapshots.delete(id)
+}
+
+export async function deleteOldestSnapshot(): Promise<boolean> {
+  const oldest = await db.snapshots.orderBy('at').first()
+  if (!oldest) return false
+  await db.snapshots.delete(oldest.id)
+  return true
+}
+
+/** Réinjecte un instantané. Les livres plus récents ne sont pas écrasés. */
+export async function restoreSnapshot(id: string): Promise<ImportResult> {
+  const payload = await getSnapshotPayload(id)
+  if (!payload) throw new Error('Cet instantané a été supprimé.')
+  return importJson(JSON.parse(payload))
 }
 
 /** Livres ajoutés ou modifiés depuis la dernière sauvegarde. */

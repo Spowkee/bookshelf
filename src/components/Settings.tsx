@@ -5,9 +5,16 @@ import {
   coversSize,
   exportCsv,
   exportJson,
+  deleteSnapshot,
+  getBackupCount,
   getLastBackup,
+  getSnapshotPayload,
   importJson,
+  listSnapshots,
   markBackup,
+  restoreSnapshot,
+  saveSnapshot,
+  type SnapshotInfo,
   type Stats,
 } from '../db/repo'
 import { STATUS_LABELS, STATUS_ORDER, type Book } from '../db/schema'
@@ -34,6 +41,8 @@ export function Settings({ books, onChanged }: Props) {
   const [refreshing, setRefreshing] = useState(false)
   const [lastBackup, setLastBackup] = useState<string | null>(null)
   const [pending, setPending] = useState(0)
+  const [backupCount, setBackupCount] = useState(0)
+  const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -42,6 +51,8 @@ export function Settings({ books, onChanged }: Props) {
     // L'API Storage donne l'occupation reelle de l'origine, couvertures incluses.
     void getLastBackup().then(setLastBackup)
     void changesSinceBackup().then(setPending)
+    void getBackupCount().then(setBackupCount)
+    void listSnapshots().then(setSnapshots)
     void navigator.storage?.estimate?.().then((e) => {
       if (e.usage != null && e.quota != null) setQuota({ usage: e.usage, quota: e.quota })
     })
@@ -95,15 +106,19 @@ export function Settings({ books, onChanged }: Props) {
 
   async function doExportJson() {
     const payload = await exportJson()
+    const json = JSON.stringify(payload, null, 2)
     const saved = await saveFile(
-      JSON.stringify(payload, null, 2),
+      json,
       `bookshelf-${stamp()}.json`,
       'application/json',
     )
     if (!saved) return
     await markBackup()
+    await saveSnapshot(json, payload.books.length)
     setLastBackup(new Date().toISOString())
     setPending(0)
+    setBackupCount((n) => n + 1)
+    setSnapshots(await listSnapshots())
     setMessage({ kind: 'info', text: `${payload.books.length} livres sauvegardés.` })
   }
 
@@ -140,6 +155,30 @@ export function Settings({ books, onChanged }: Props) {
     } finally {
       if (fileRef.current) fileRef.current.value = ''
     }
+  }
+
+  async function downloadSnapshot(info: SnapshotInfo) {
+    const payload = await getSnapshotPayload(info.id)
+    if (!payload) return
+    await saveFile(payload, `bookshelf-${info.at.slice(0, 10)}.json`, 'application/json')
+  }
+
+  async function doRestore(info: SnapshotInfo) {
+    try {
+      const result = await restoreSnapshot(info.id)
+      onChanged()
+      setMessage({
+        kind: 'info',
+        text: `${result.added} livre${result.added > 1 ? 's' : ''} réintégré${result.added > 1 ? 's' : ''}, ${result.skipped} déjà à jour.`,
+      })
+    } catch (e) {
+      setMessage({ kind: 'error', text: e instanceof Error ? e.message : 'Restauration impossible.' })
+    }
+  }
+
+  async function doDeleteSnapshot(id: string) {
+    await deleteSnapshot(id)
+    setSnapshots(await listSnapshots())
   }
 
   async function requestPersist() {
@@ -280,6 +319,69 @@ export function Settings({ books, onChanged }: Props) {
         intitulés, et un écran te laisse corriger la correspondance avant d'écrire quoi que ce soit.
         Les fiches incomplètes peuvent être complétées automatiquement via leur ISBN.
       </p>
+
+      <div className="section-title">Historique</div>
+      <div className="card">
+        <div className="stat-row">
+          <span className="muted">Sauvegardes effectuées</span>
+          <b>{backupCount}</b>
+        </div>
+        <div className="stat-row">
+          <span className="muted">Dernière</span>
+          <b>{lastBackup ? new Date(lastBackup).toLocaleDateString('fr-FR') : 'jamais'}</b>
+        </div>
+      </div>
+
+      <p className="tiny muted">
+        L'app compte les sauvegardes qu'elle a produites, mais <b>ne voit pas les fichiers</b> une
+        fois sortis du navigateur : ils appartiennent à l'app Fichiers ou à iCloud, et c'est là
+        qu'il faut supprimer les plus anciens. Aucune page web ne peut lire ni effacer les fichiers
+        d'un téléphone — c'est ce qui vous protège des sites malveillants.
+      </p>
+
+      <div className="section-title">Copies conservées dans l'app</div>
+      {snapshots.length === 0 ? (
+        <p className="small muted" style={{ marginTop: 0 }}>
+          Aucune pour l'instant. Chaque sauvegarde en laisse une ici, et seules les trois plus
+          récentes sont gardées.
+        </p>
+      ) : (
+        <>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            {snapshots.map((snap) => (
+              <div className="preview-row" key={snap.id}>
+                <b>
+                  {new Date(snap.at).toLocaleString('fr-FR', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit',
+                  })}
+                </b>
+                <span className="muted small">
+                  {snap.books} livre{snap.books > 1 ? 's' : ''} · {human(snap.bytes)}
+                </span>
+                <div className="row" style={{ marginTop: 8, gap: 8 }}>
+                  <button className="btn btn-ghost tiny" onClick={() => doRestore(snap)}>
+                    Restaurer
+                  </button>
+                  <button className="btn btn-ghost tiny" onClick={() => downloadSnapshot(snap)}>
+                    Récupérer
+                  </button>
+                  <div style={{ flex: 1 }} />
+                  <button className="btn btn-ghost tiny" style={{ color: 'var(--danger)' }} onClick={() => doDeleteSnapshot(snap.id)}>
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="tiny muted">
+            Une copie sert à rattraper une fausse manœuvre — suppression de masse, import raté.
+            Elle vit dans le même stockage que tes livres : elle ne remplace pas le fichier
+            exporté, qui seul survit à la perte du téléphone. « Restaurer » réintègre les livres
+            manquants sans écraser ceux modifiés depuis.
+          </p>
+        </>
+      )}
 
       <div className="section-title">Stockage</div>
       <div className="card">
