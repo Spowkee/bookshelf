@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover : indispensable pour que le contenu passe sous
+         l'encoche et la barre d'accueil de l'iPhone en mode standalone. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#17120f" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Journal de lecture personnel. Scanne l'ISBN, garde la trace de tes livres. Tout reste sur ton appareil." />
+
+    <!-- iOS ignore le manifest pour l'icone et le mode plein ecran. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Bookshelf" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <title>Bookshelf</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

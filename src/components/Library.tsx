@@ -1,0 +1,157 @@
+import { useMemo, useState } from 'react'
+import { STATUS_LABELS, STATUS_ORDER, type Book, type ReadingStatus } from '../db/schema'
+import { BookCover } from './BookCover'
+import { IconBooks } from './icons'
+
+type SortKey = 'recent' | 'title' | 'author' | 'year' | 'rating'
+
+const SORT_LABELS: Record<SortKey, string> = {
+  recent: 'Récents',
+  title: 'Titre',
+  author: 'Auteur',
+  year: 'Année',
+  rating: 'Note',
+}
+
+interface Props {
+  books: Book[]
+  onOpen: (book: Book) => void
+  onGoScan: () => void
+}
+
+/** Normalise pour une recherche insensible aux accents et à la casse. */
+const fold = (s: string) =>
+  s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
+export function Library({ books, onOpen, onGoScan }: Props) {
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<ReadingStatus | 'all'>('all')
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [sort, setSort] = useState<SortKey>('recent')
+
+  const allTags = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const b of books) for (const t of b.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t).slice(0, 12)
+  }, [books])
+
+  const shown = useMemo(() => {
+    const q = fold(query.trim())
+    let list = books
+
+    if (statusFilter !== 'all') list = list.filter((b) => b.status === statusFilter)
+    if (tagFilter) list = list.filter((b) => b.tags.includes(tagFilter))
+    if (q) {
+      list = list.filter(
+        (b) =>
+          fold(b.title).includes(q) ||
+          b.authors.some((a) => fold(a).includes(q)) ||
+          (b.publisher ? fold(b.publisher).includes(q) : false) ||
+          b.tags.some((t) => fold(t).includes(q)),
+      )
+    }
+
+    const sorted = [...list]
+    sorted.sort((a, b) => {
+      switch (sort) {
+        case 'title':
+          return a.title.localeCompare(b.title, 'fr')
+        case 'author':
+          return (a.authors[0] ?? 'zzz').localeCompare(b.authors[0] ?? 'zzz', 'fr')
+        case 'year':
+          return (b.publishedYear ?? 0) - (a.publishedYear ?? 0)
+        case 'rating':
+          return (b.rating ?? 0) - (a.rating ?? 0)
+        default:
+          return b.updatedAt.localeCompare(a.updatedAt)
+      }
+    })
+    return sorted
+  }, [books, query, statusFilter, tagFilter, sort])
+
+  if (books.length === 0) {
+    return (
+      <div className="empty">
+        <IconBooks />
+        <h3>Ta bibliothèque est vide</h3>
+        <p>Scanne le code-barres au dos d'un livre pour l'ajouter en deux secondes.</p>
+        <button className="btn btn-primary" onClick={onGoScan}>Scanner un livre</button>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <input
+        className="input"
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Filtrer par titre, auteur, éditeur, tag…"
+        style={{ marginBottom: 12 }}
+      />
+
+      <div className="chips" style={{ marginBottom: 10 }}>
+        <button className="chip" aria-pressed={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>
+          Tout ({books.length})
+        </button>
+        {STATUS_ORDER.map((s) => {
+          const n = books.filter((b) => b.status === s).length
+          if (n === 0) return null
+          return (
+            <button key={s} className="chip" aria-pressed={statusFilter === s} onClick={() => setStatusFilter(s)}>
+              {STATUS_LABELS[s]} ({n})
+            </button>
+          )
+        })}
+      </div>
+
+      {allTags.length > 0 && (
+        <div className="chips" style={{ marginBottom: 10 }}>
+          {allTags.map((t) => (
+            <button
+              key={t}
+              className="chip"
+              aria-pressed={tagFilter === t}
+              onClick={() => setTagFilter(tagFilter === t ? null : t)}
+            >
+              #{t}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="row" style={{ marginBottom: 14 }}>
+        <span className="tiny muted">{shown.length} livre{shown.length > 1 ? 's' : ''}</span>
+        <div className="spacer" style={{ flex: 1 }} />
+        <select
+          className="input"
+          style={{ width: 'auto', padding: '7px 10px', fontSize: '0.85rem' }}
+          value={sort}
+          onChange={(e) => setSort(e.target.value as SortKey)}
+          aria-label="Trier par"
+        >
+          {Object.entries(SORT_LABELS).map(([k, label]) => (
+            <option key={k} value={k}>{label}</option>
+          ))}
+        </select>
+      </div>
+
+      {shown.length === 0 ? (
+        <p className="empty small">Aucun livre ne correspond à ce filtre.</p>
+      ) : (
+        <div className="grid">
+          {shown.map((b) => (
+            <button key={b.id} className="grid-item" onClick={() => onOpen(b)}>
+              <BookCover bookId={b.id} coverUrl={b.coverUrl} title={b.title}>
+                <span className={`status-dot dot-${b.status}`} title={STATUS_LABELS[b.status]} />
+              </BookCover>
+              <h4>{b.title}</h4>
+              <p>{b.authors[0] ?? '—'}</p>
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}

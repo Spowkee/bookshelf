@@ -1,0 +1,60 @@
+# Construit l'app et la publie sur GitHub Pages à chaque push sur la branche
+# principale. Aucun hébergeur, aucun serveur, aucun compte supplémentaire :
+# GitHub exécute le build et sert le résultat.
+#
+# À activer une seule fois : Settings → Pages → Build and deployment →
+# Source : « GitHub Actions ».
+name: Déployer sur GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  # Permet aussi de relancer la publication à la main depuis l'onglet Actions.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Une publication à la fois ; les pushes rapprochés n'annulent pas celle en
+# cours, sans quoi on peut laisser le site dans un état à moitié déployé.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Build
+        # GitHub Pages sert le site sous /<nom-du-depot>/ : sans ce préfixe,
+        # le service worker et les icônes partent en 404.
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

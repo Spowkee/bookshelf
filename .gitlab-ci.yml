@@ -1,0 +1,38 @@
+# Publication sur GitLab Pages — utilisable sur Framagit (Framasoft, France),
+# sur une instance GitLab d'entreprise, ou sur gitlab.com.
+#
+# Contrairement à GitHub Pages, GitLab publie aussi depuis un dépôt PRIVÉ sans
+# abonnement payant : le code reste fermé, seul le site est public.
+#
+# Activation : pousser ce fichier, puis Deploy → Pages dans le projet.
+# L'URL finale est affichée là (forme https://<utilisateur>.frama.io/<projet>/
+# sur Framagit).
+#
+# Si ce fichier est le seul utilisé, le workflow GitHub (.github/workflows/)
+# peut être supprimé — et inversement.
+
+image: node:22
+
+stages: [build]
+
+pages:
+  stage: build
+  cache:
+    key:
+      files: [package-lock.json]
+    paths: [.npm]
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm test
+    # GitLab Pages sert le site sous /<nom-du-projet>/ et non à la racine :
+    # sans ce préfixe, le service worker et les icônes partent en 404.
+    - BASE_PATH=/$CI_PROJECT_NAME/ npm run build
+    # GitLab Pages exige que le résultat soit dans un dossier nommé "public".
+    # Or "public/" est déjà le dossier des fichiers statiques source de Vite,
+    # dont le contenu a été copié dans dist/ pendant le build : on peut donc
+    # l'écraser sans rien perdre. Le runner est éphémère, le dépôt intact.
+    - rm -rf public && mv dist public
+  artifacts:
+    paths: [public]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
