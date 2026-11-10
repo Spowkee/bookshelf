@@ -339,13 +339,30 @@ export function Settings({ books, onChanged }: Props) {
           onDone={(result) => {
             setForeignFile(null)
             onChanged()
+
+            const parts = [`${result.added} livre${result.added > 1 ? 's' : ''} importé${result.added > 1 ? 's' : ''}`]
+            if (result.enriched > 0) parts.push(`${result.enriched} complété${result.enriched > 1 ? 's' : ''}`)
+            if (result.duplicates > 0) parts.push(`${result.duplicates} déjà présent${result.duplicates > 1 ? 's' : ''}`)
+
+            // Un import interrompu ne doit pas passer pour un succes complet :
+            // sans ce message, on croit avoir tout importe et on ne relance pas.
+            const interrupted = result.remaining > 0
+            if (interrupted) {
+              parts.push(`${result.remaining} restant${result.remaining > 1 ? 's' : ''}`)
+            }
+
+            let why = ''
+            if (result.stoppedByQuota) {
+              why = " Arrêté : limite de requêtes atteinte chez Google. Relance le même fichier plus tard, la reprise ne créera pas de doublons."
+            } else if (result.stoppedByErrors) {
+              why = " Arrêté : les catalogues ne répondent plus. Vérifie ta connexion, puis relance le même fichier."
+            } else if (interrupted) {
+              why = ' Relance le même fichier pour terminer.'
+            }
+
             setMessage({
-              kind: 'info',
-              text:
-                `${result.added} livre${result.added > 1 ? 's' : ''} importé${result.added > 1 ? 's' : ''}` +
-                (result.enriched > 0 ? `, ${result.enriched} complété${result.enriched > 1 ? 's' : ''} depuis les catalogues` : '') +
-                (result.duplicates > 0 ? `, ${result.duplicates} déjà présent${result.duplicates > 1 ? 's' : ''}` : '') +
-                '.',
+              kind: interrupted ? 'error' : 'info',
+              text: parts.join(', ') + '.' + why,
             })
           }}
         />

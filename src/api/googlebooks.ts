@@ -1,5 +1,6 @@
 import type { BookDraft, SearchQuery } from './types'
 import { toIsbn13, normalizeIsbn, isValidIsbn10 } from '../lib/isbn'
+import { fetchWithTimeout } from '../lib/timeout'
 
 const BASE = 'https://www.googleapis.com/books/v1/volumes'
 
@@ -103,7 +104,7 @@ async function gbFetch(params: URLSearchParams, signal?: AbortSignal): Promise<G
   lastCallAt = Date.now()
 
   if (API_KEY) params.set('key', API_KEY)
-  const res = await fetch(`${BASE}?${params}`, { signal })
+  const res = await fetchWithTimeout(`${BASE}?${params}`, { signal })
 
   if (res.status === 429 || res.status === 403) {
     throttledUntil = Date.now() + COOLDOWN_MS

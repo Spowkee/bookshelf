@@ -78,7 +78,7 @@ L'onglet **Bibliothèque** propose :
 - des **filtres par état** et **par tag** ;
 - un **tri** par date d'ajout, titre, auteur, année ou note.
 
-**L'index alphabétique** apparaît sur le bord droit dès que tu tries par titre ou par auteur. Un appui sur une lettre saute directement à la section ; un glissement du doigt le long de la barre fait défiler en continu, avec la lettre affichée en gros au milieu de l'écran. Les titres sont classés en ignorant l'article initial : « Les Misérables » se range à **M**, pas à **L**.
+**L'index alphabétique** apparaît sur le bord droit dès que tu tries par titre ou par auteur. Un appui sur une lettre saute directement à la section ; un glissement du doigt le long de la barre fait défiler en continu, avec la lettre affichée en gros au milieu de l'écran. Le classement suit le **titre exact**, article compris : « Les Misérables » se range à **L**, comme sur l'étagère.
 
 ## Enrichir une fiche
 

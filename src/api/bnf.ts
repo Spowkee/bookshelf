@@ -1,6 +1,7 @@
 import type { BookDraft } from './types'
 import { isbn13to10, toIsbn13 } from '../lib/isbn'
 import { coverUrlFromIsbn } from './openlibrary'
+import { fetchWithTimeout } from '../lib/timeout'
 
 /**
  * Catalogue général de la BnF — protocole SRU, notices UNIMARC/XML.
@@ -122,7 +123,7 @@ async function runSru(
   fallbackIsbn13: string | undefined,
   signal?: AbortSignal,
 ): Promise<BookDraft | null> {
-  const res = await fetch(sruUrl(query), { signal })
+  const res = await fetchWithTimeout(sruUrl(query), { signal })
   if (!res.ok) throw new Error(`BnF: HTTP ${res.status}`)
   const doc = new DOMParser().parseFromString(await res.text(), 'application/xml')
 

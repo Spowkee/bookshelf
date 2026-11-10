@@ -30,11 +30,14 @@ interface Props {
 const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
 /**
- * Retire l'article initial pour le classement : « Les Misérables » se range
- * à M, pas à L — sinon un quart de la bibliothèque s'entasse sous « L ».
+ * Clé de classement d'un titre : le titre lui-même, article compris.
+ *
+ * « Les Misérables » se range donc à L. C'est le choix de l'utilisateur, et
+ * c'est aussi le plus prévisible : on cherche un livre par ce qu'on lit sur la
+ * tranche, pas par une forme normalisée qu'il faudrait deviner.
  */
 function sortableTitle(title: string): string {
-  return title.replace(/^\s*(l'|le |la |les |un |une |des |the |a |an )/i, '').trim() || title
+  return title.trim()
 }
 
 export function Library({ books, onOpen, onGoScan }: Props) {

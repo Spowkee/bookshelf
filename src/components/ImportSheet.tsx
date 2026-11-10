@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { parseCsv, type CsvRow } from '../lib/csv'
 import {
   applyMapping,
@@ -11,7 +11,7 @@ import {
 } from '../lib/importMapping'
 import { STATUS_LABELS, STATUS_ORDER, type ReadingStatus } from '../db/schema'
 import { importForeignRows, type ForeignImportResult } from '../db/repo'
-import { lookupByIsbn } from '../api'
+import { lookupByIsbn, coverCandidates, isGoogleThrottled } from '../api'
 import { Sheet } from './Sheet'
 
 interface Props {
@@ -74,7 +74,8 @@ export function ImportSheet({ file, onClose, onDone }: Props) {
   const [delimiter, setDelimiter] = useState('')
   const [defaultStatus, setDefaultStatus] = useState<ReadingStatus>('read')
   const [enrich, setEnrich] = useState(true)
-  const [progress, setProgress] = useState({ done: 0, total: 0 })
+  const [progress, setProgress] = useState({ done: 0, total: 0, title: '' })
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -119,13 +120,17 @@ export function ImportSheet({ file, onClose, onDone }: Props) {
   }
 
   async function runImport() {
+    const ctrl = new AbortController()
+    abortRef.current = ctrl
     setPhase('importing')
-    setProgress({ done: 0, total: mapped.length })
+    setProgress({ done: 0, total: mapped.length, title: '' })
     try {
       const result = await importForeignRows(mapped, {
-        enrich: enrich ? (isbn) => lookupByIsbn(isbn) : undefined,
-        fetchCovers: true,
-        onProgress: (done, total) => setProgress({ done, total }),
+        enrich: enrich ? (isbn, signal) => lookupByIsbn(isbn, signal) : undefined,
+        coverUrls: coverCandidates,
+        isThrottled: isGoogleThrottled,
+        signal: ctrl.signal,
+        onProgress: (done, total, title) => setProgress({ done, total, title }),
       })
       onDone(result)
     } catch (e) {
@@ -150,10 +155,18 @@ export function ImportSheet({ file, onClose, onDone }: Props) {
         <div className="section-title">Import en cours</div>
         <p className="small muted">
           {progress.done} / {progress.total} livres traités
-          {enrich && ' — les fiches incomplètes sont complétées depuis les catalogues, ce qui prend quelques secondes par livre.'}
         </p>
         <div className="progress"><div className="progress-bar" style={{ width: `${pct}%` }} /></div>
-        <p className="tiny muted center">Ne ferme pas l'application.</p>
+        <p className="refresh-now">{progress.title}</p>
+        <div className="sheet-actions">
+          <button className="btn btn-block" onClick={() => abortRef.current?.abort()}>
+            Arrêter
+          </button>
+        </div>
+        <p className="tiny muted center">
+          Les livres déjà importés sont conservés. Relancer le même fichier reprendra où ça
+          s'est arrêté, sans créer de doublons.
+        </p>
       </Sheet>
     )
   }

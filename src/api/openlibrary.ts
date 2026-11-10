@@ -1,5 +1,6 @@
 import type { BookDraft, SearchQuery } from './types'
 import { toIsbn13 } from '../lib/isbn'
+import { fetchWithTimeout } from '../lib/timeout'
 
 const BASE = 'https://openlibrary.org'
 export const COVERS = 'https://covers.openlibrary.org'
@@ -10,7 +11,7 @@ export const COVERS = 'https://covers.openlibrary.org'
  * clous par le débit : un seul appel par ajout de livre, jamais de boucle.
  */
 async function olFetch(url: string, signal?: AbortSignal): Promise<unknown> {
-  const res = await fetch(url, { signal, headers: { Accept: 'application/json' } })
+  const res = await fetchWithTimeout(url, { signal, headers: { Accept: 'application/json' } })
   if (!res.ok) throw new Error(`Open Library: HTTP ${res.status}`)
   return res.json()
 }

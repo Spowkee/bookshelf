@@ -6,6 +6,7 @@ import { languageLabel } from '../lib/language'
 import type { MappedRow } from '../lib/importMapping'
 import { deriveGenre } from '../lib/genre'
 import { parseSeries } from '../lib/series'
+import { fetchWithTimeout } from '../lib/timeout'
 
 const nowIso = () => new Date().toISOString()
 
@@ -134,7 +135,7 @@ export async function purgeTombstones(olderThanDays = 90): Promise<number> {
  */
 export async function cacheCover(bookId: string, url: string): Promise<boolean> {
   try {
-    const res = await fetch(url)
+    const res = await fetchWithTimeout(url, {}, 8000)
     if (!res.ok) return false
     const blob = await res.blob()
     // Open Library renvoie un GIF de 807 octets quand la couverture n'existe
@@ -327,16 +328,36 @@ export async function importJson(payload: unknown): Promise<ImportResult> {
 
 export interface ForeignImportOptions {
   /** Complète les fiches incomplètes depuis les catalogues (réseau). */
-  enrich?: (isbn13: string) => Promise<BookDraft | null>
-  /** Télécharge la couverture après création. */
-  fetchCovers?: boolean
-  onProgress?: (done: number, total: number) => void
+  enrich?: (isbn13: string, signal?: AbortSignal) => Promise<BookDraft | null>
+  /** URL de couverture à essayer, dans l'ordre. */
+  coverUrls?: (opts: { isbn13?: string; isbn10?: string; knownUrl?: string }) => string[]
+  /** Interroge l'état du quota d'une source, pour s'arrêter avant d'insister. */
+  isThrottled?: () => boolean
+  /** Pause entre deux livres quand le réseau est sollicité. */
+  delayMs?: number
+  onProgress?: (done: number, total: number, title: string) => void
   signal?: AbortSignal
 }
+
+/**
+ * Nombre d'échecs réseau consécutifs au-delà duquel on arrête.
+ *
+ * Passé ce seuil, ce n'est plus un livre introuvable mais le réseau ou le
+ * catalogue qui est tombé. Continuer sur 300 lignes produirait 300 échecs,
+ * ferait durer l'import un quart d'heure et finirait par faire blacklister
+ * l'adresse. Les livres déjà créés sont conservés : la reprise les saute.
+ */
+const MAX_CONSECUTIVE_FAILURES = 8
 
 export interface ForeignImportResult extends ImportResult {
   enriched: number
   duplicates: number
+  /** Livres créés mais dont la complétion réseau a échoué. */
+  failed: number
+  /** Livres non traités : arrêt par l'utilisateur, le quota ou une panne. */
+  remaining: number
+  stoppedByQuota: boolean
+  stoppedByErrors: boolean
 }
 
 /**
@@ -354,7 +375,23 @@ export async function importForeignRows(
   rows: MappedRow[],
   options: ForeignImportOptions = {},
 ): Promise<ForeignImportResult> {
-  const result: ForeignImportResult = { added: 0, updated: 0, skipped: 0, enriched: 0, duplicates: 0 }
+  const result: ForeignImportResult = {
+    added: 0,
+    updated: 0,
+    skipped: 0,
+    enriched: 0,
+    duplicates: 0,
+    failed: 0,
+    remaining: rows.length,
+    stoppedByQuota: false,
+    stoppedByErrors: false,
+  }
+
+  // Pas de pause si l'on n'interroge pas le réseau : l'écriture locale est
+  // rapide et n'a aucune raison d'être ralentie.
+  const delay = options.delayMs ?? (options.enrich ? 350 : 0)
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  let consecutiveFailures = 0
 
   const existing = await allBooks()
   const byIsbn = new Map(existing.filter((b) => b.isbn13).map((b) => [b.isbn13!, b]))
@@ -364,6 +401,17 @@ export async function importForeignRows(
   for (const row of rows) {
     if (options.signal?.aborted) break
 
+    if (options.isThrottled?.()) {
+      result.stoppedByQuota = true
+      break
+    }
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      result.stoppedByErrors = true
+      break
+    }
+
+    options.onProgress?.(done, rows.length, row.title)
+
     const duplicate = row.isbn13
       ? byIsbn.get(row.isbn13)
       : byTitleAuthor.get(titleAuthorKey(row.title, row.authors[0]))
@@ -372,7 +420,7 @@ export async function importForeignRows(
       result.duplicates++
       result.skipped++
       done++
-      options.onProgress?.(done, rows.length)
+      result.remaining--
       continue
     }
 
@@ -382,10 +430,14 @@ export async function importForeignRows(
     const needsEnrichment = !row.authors.length || !row.pageCount || !row.publisher
     if (options.enrich && row.isbn13 && needsEnrichment) {
       try {
-        draft = await options.enrich(row.isbn13)
+        draft = await options.enrich(row.isbn13, options.signal)
         if (draft) result.enriched++
+        // Un ISBN inconnu des catalogues n'est pas une panne : seule une
+        // exception (réseau coupé, délai dépassé) compte comme un échec.
+        consecutiveFailures = 0
       } catch {
-        /* source injoignable : on garde ce que le fichier contenait */
+        result.failed++
+        consecutiveFailures++
       }
     }
 
@@ -428,14 +480,22 @@ export async function importForeignRows(
     byTitleAuthor.set(titleAuthorKey(book.title, book.authors[0]), book)
     result.added++
 
-    if (options.fetchCovers && book.coverUrl) {
-      void cacheCover(book.id, book.coverUrl)
+    // La couverture est attendue, pas lancée en arrière-plan : 300 appels
+    // `void` simultanés saturent le pool de connexions du navigateur et
+    // figent tout le reste, y compris les requêtes de métadonnées.
+    if (options.coverUrls) {
+      await cacheCoverFromCandidates(
+        book.id,
+        options.coverUrls({ isbn13: book.isbn13, isbn10: book.isbn10, knownUrl: book.coverUrl }),
+      )
     }
 
     done++
-    options.onProgress?.(done, rows.length)
+    result.remaining--
+    if (delay > 0) await sleep(delay)
   }
 
+  options.onProgress?.(done, rows.length, '')
   return result
 }
 
