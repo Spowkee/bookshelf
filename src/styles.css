@@ -438,3 +438,161 @@ textarea.input { resize: vertical; min-height: 86px; line-height: 1.5; }
 }
 
 .btn-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+
+/* ------------------------------------------------- navigation des feuilles */
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px -4px 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.sheet-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 7px 10px 7px 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 0.93rem;
+  font-weight: 560;
+  border-radius: 9px;
+  -webkit-tap-highlight-color: transparent;
+}
+.sheet-back:active { background: var(--surface-2); }
+.sheet-back svg { width: 21px; height: 21px; }
+.sheet-title {
+  font-size: 0.82rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* La feuille suit le doigt : pas de transition pendant le glissement. */
+.sheet { transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* ------------------------------------------------- index alphabetique */
+.indexed {
+  position: relative;
+  /* Reserve la gouttiere de la barre A-Z pour que les couvertures
+     ne passent pas dessous. */
+  padding-right: 26px;
+}
+
+.alpha-section {
+  /* Compense la barre superieure collante quand on saute a une lettre. */
+  scroll-margin-top: 8px;
+}
+
+.alpha-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 18px 0 10px;
+  padding: 5px 0 5px 2px;
+  font-size: 1.05rem;
+  font-weight: 680;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+.alpha-section:first-child .alpha-head { margin-top: 0; }
+.alpha-head span {
+  font-size: 0.72rem;
+  font-weight: 550;
+  color: var(--text-dim);
+}
+
+.alpha-bar {
+  position: fixed;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(6px);
+  /* Le scrub gere lui-meme le defilement vertical. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.alpha-letter {
+  border: 0;
+  background: none;
+  padding: 0;
+  width: 19px;
+  height: 15px;
+  font-size: 0.6rem;
+  font-weight: 650;
+  line-height: 1;
+  color: var(--text-dim);
+  border-radius: 4px;
+}
+.alpha-letter[data-present='false'] { opacity: 0.25; }
+.alpha-letter[data-present='true'] { color: var(--accent); }
+.alpha-letter[data-active='true'] { background: var(--accent); color: var(--surface); }
+
+.alpha-bubble {
+  position: fixed;
+  right: 46px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 26;
+  width: 62px;
+  height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.9rem;
+  font-weight: 680;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+:root[data-theme='dark'] .alpha-bubble { color: #1a120d; }
+
+@media (min-width: 700px) {
+  /* Sur large ecran la barre se cale sur la colonne de contenu. */
+  .alpha-bar { right: calc(50% - 410px + 2px); }
+  .alpha-bubble { right: calc(50% - 410px + 46px); }
+}
+
+/* ------------------------------------------------- complétion des fiches */
+.gap-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.gap-pill {
+  font-size: 0.72rem;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+.refresh-now {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-height: 1.2em;
+}

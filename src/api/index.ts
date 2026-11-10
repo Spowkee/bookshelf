@@ -8,12 +8,45 @@ import { normalizeLanguage } from '../lib/language'
 export type { BookDraft, SearchQuery } from './types'
 export { isEmptyQuery } from './types'
 export { coverUrlFromIsbn } from './openlibrary'
+export {
+  isThrottled as isGoogleThrottled,
+  throttleMinutesLeft as googleThrottleMinutesLeft,
+} from './googlebooks'
 
 export const SOURCE_LABELS: Record<string, string> = {
   openlibrary: 'Open Library',
   googlebooks: 'Google Books',
   bnf: 'BnF',
   manual: 'Saisie manuelle',
+}
+
+/**
+ * Toutes les URL de couverture plausibles, par ordre de préférence. Le premier
+ * téléchargement réussi gagne.
+ *
+ * Pourquoi plusieurs : Open Library n'a d'image que pour une partie des ISBN,
+ * et son champ `cover` est parfois vide alors que l'image existe bel et bien
+ * sur son CDN — d'où l'URL reconstruite depuis l'ISBN même quand la fiche n'en
+ * annonce aucune. Les vignettes Google comblent une partie du reste.
+ *
+ * L'ISBN-10 est tenté en dernier : les éditions d'avant 2007 sont souvent
+ * indexées sous cette seule forme dans la base des couvertures.
+ */
+export function coverCandidates(opts: {
+  isbn13?: string
+  isbn10?: string
+  knownUrl?: string
+  googleThumb?: string
+}): string[] {
+  const urls: string[] = []
+  if (opts.knownUrl) urls.push(opts.knownUrl)
+  if (opts.isbn13) {
+    urls.push(openlibrary.coverUrlFromIsbn(opts.isbn13, 'L'))
+    urls.push(openlibrary.coverUrlFromIsbn(opts.isbn13, 'M'))
+  }
+  if (opts.googleThumb) urls.push(opts.googleThumb)
+  if (opts.isbn10) urls.push(openlibrary.coverUrlFromIsbn(opts.isbn10, 'L'))
+  return [...new Set(urls)]
 }
 
 /** Prend `a` en priorité, complète les trous avec `b`. */

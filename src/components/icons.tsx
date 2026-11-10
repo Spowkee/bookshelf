@@ -54,3 +54,18 @@ export const IconCheck = () => (
     <path d="m4 12.5 5 5L20 6.5" />
   </svg>
 )
+
+export const IconChevronLeft = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="m15 5-7 7 7 7" />
+  </svg>
+)
+
+export const IconRefresh = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M20 11a8 8 0 0 0-13.7-5.6L3 8.5" />
+    <path d="M3 4v4.5h4.5" />
+    <path d="M4 13a8 8 0 0 0 13.7 5.6L21 15.5" />
+    <path d="M21 20v-4.5h-4.5" />
+  </svg>
+)

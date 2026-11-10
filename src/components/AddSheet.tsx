@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { BookDraft } from '../api'
-import { SOURCE_LABELS } from '../api'
+import { SOURCE_LABELS, coverCandidates } from '../api'
 import { STATUS_LABELS, STATUS_ORDER, type Book, type ReadingStatus } from '../db/schema'
-import { addBook, cacheCover, draftToBook, findByIsbn } from '../db/repo'
+import { addBook, cacheCoverFromCandidates, draftToBook, findByIsbn } from '../db/repo'
 import { BookCover } from './BookCover'
 import { Sheet } from './Sheet'
 import { formatIsbn } from '../lib/isbn'
@@ -42,15 +42,19 @@ export function AddSheet({ draft, onClose, onAdded }: Props) {
       await addBook(book)
       onAdded(book)
       // La couverture se telecharge apres coup : l'ajout doit etre instantane,
-      // pas suspendu a une image de 25 Ko sur un reseau lent.
-      if (draft.coverUrl) void cacheCover(book.id, draft.coverUrl)
+      // pas suspendu a une image sur un reseau lent. Plusieurs URL sont
+      // essayees, car Open Library n'a pas d'image pour tous les ISBN.
+      void cacheCoverFromCandidates(
+        book.id,
+        coverCandidates({ isbn13: book.isbn13, isbn10: book.isbn10, knownUrl: draft.coverUrl }),
+      )
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <Sheet onClose={onClose}>
+    <Sheet onClose={onClose} title="Ajouter un livre">
       {duplicate && (
         <div className="banner banner-info">
           Tu as déjà ce livre dans ta bibliothèque ({STATUS_LABELS[duplicate.status]}). L'ajouter créera un doublon.

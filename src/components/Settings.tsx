@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { computeStats, coversSize, exportCsv, exportJson, importJson, type Stats } from '../db/repo'
 import { STATUS_LABELS, STATUS_ORDER, type Book } from '../db/schema'
 import { ImportSheet } from './ImportSheet'
+import { RefreshSheet } from './RefreshSheet'
 
 interface Props {
   books: Book[]
@@ -20,6 +21,7 @@ export function Settings({ books, onChanged }: Props) {
   const [quota, setQuota] = useState<{ usage: number; quota: number } | null>(null)
   const [message, setMessage] = useState<{ kind: 'info' | 'error'; text: string } | null>(null)
   const [foreignFile, setForeignFile] = useState<File | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -142,6 +144,19 @@ export function Settings({ books, onChanged }: Props) {
         </>
       )}
 
+      <div className="section-title">Compléter les fiches</div>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Repasse sur les livres dont la couverture, le résumé ou la pagination manquent, et
+        réinterroge les catalogues via leur ISBN. Open Library n'a pas d'image pour tous les
+        livres : les sources sont essayées l'une après l'autre.
+      </p>
+      <button className="btn btn-block" onClick={() => setRefreshing(true)}>
+        Chercher les fiches incomplètes
+      </button>
+      <p className="tiny muted">
+        Rien de ce que tu as saisi n'est modifié — seuls les champs vides sont remplis.
+      </p>
+
       <div className="section-title">Sauvegarde</div>
       <p className="small muted" style={{ marginTop: 0 }}>
         Tes livres ne vivent que sur cet appareil. Exporte régulièrement : c'est ta seule copie de
@@ -221,6 +236,22 @@ export function Settings({ books, onChanged }: Props) {
         général de la BnF. Aucune donnée personnelle ne quitte l'appareil : les seules requêtes
         réseau sont les recherches de livres.
       </p>
+
+      {refreshing && (
+        <RefreshSheet
+          onClose={() => setRefreshing(false)}
+          onDone={(result) => {
+            setRefreshing(false)
+            onChanged()
+            setMessage({
+              kind: 'info',
+              text:
+                `${result.coversAdded} couverture${result.coversAdded > 1 ? 's' : ''} récupérée${result.coversAdded > 1 ? 's' : ''}` +
+                `, ${result.fieldsFilled} champ${result.fieldsFilled > 1 ? 's' : ''} complété${result.fieldsFilled > 1 ? 's' : ''}.`,
+            })
+          }}
+        />
+      )}
 
       {foreignFile && (
         <ImportSheet

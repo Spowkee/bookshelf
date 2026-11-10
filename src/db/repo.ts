@@ -118,8 +118,38 @@ export async function cacheCover(bookId: string, url: string): Promise<boolean> 
   }
 }
 
+/**
+ * Essaie plusieurs URL et garde la première image valable.
+ * Renvoie l'URL retenue, ou null si aucune n'a donné d'image.
+ */
+export async function cacheCoverFromCandidates(bookId: string, urls: string[]): Promise<string | null> {
+  for (const url of urls) {
+    if (await cacheCover(bookId, url)) return url
+  }
+  return null
+}
+
+/**
+ * Enregistre une couverture choisie ou photographiee par l'utilisateur.
+ * C'est le seul recours pour la moitie des livres francais, qu'aucun
+ * catalogue n'illustre.
+ */
+export async function setUserCover(bookId: string, blob: Blob): Promise<void> {
+  await db.covers.put({ bookId, blob, fetchedAt: nowIso() })
+  await updateBook(bookId, {})
+}
+
+export async function removeCover(bookId: string): Promise<void> {
+  await db.covers.delete(bookId)
+  await updateBook(bookId, {})
+}
+
 export async function getCoverBlob(bookId: string): Promise<Blob | undefined> {
   return (await db.covers.get(bookId))?.blob
+}
+
+export async function hasCover(bookId: string): Promise<boolean> {
+  return (await db.covers.get(bookId)) !== undefined
 }
 
 export async function coversSize(): Promise<{ count: number; bytes: number }> {
@@ -351,6 +381,270 @@ function titleAuthorKey(title: string, author?: string): string {
   const norm = (s: string) =>
     s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '')
   return `${norm(title)}|${norm(author ?? '')}`
+}
+
+// ----------------------------------------------- complétion des fiches
+
+/** Ce qui manque à une fiche. Vide = la fiche est complète. */
+export interface Gaps {
+  cover: boolean
+  description: boolean
+  pageCount: boolean
+  authors: boolean
+  publisher: boolean
+}
+
+export interface IncompleteBook {
+  book: Book
+  gaps: Gaps
+  /** Date ISO de la dernière tentative de complétion, si elle a eu lieu. */
+  lastTriedAt?: string
+  tries: number
+}
+
+/**
+ * Journal des tentatives de complétion.
+ *
+ * Sans lui, chaque passage réinterroge les mêmes livres introuvables — et il y
+ * en a beaucoup : environ la moitié des livres français n'ont de couverture
+ * dans aucun catalogue. Au bout de trois passages, on aurait consommé le quota
+ * Google à redemander trois fois ce qui n'existe pas.
+ *
+ * Le journal permet aussi d'étaler le travail : on traite ce qui n'a jamais
+ * été tenté, on s'arrête quand le quota tombe, et on reprend le lendemain
+ * exactement là où on en était.
+ */
+const ATTEMPTS_KEY = 'refresh:attempts'
+
+interface Attempt {
+  at: string
+  tries: number
+}
+
+type AttemptLog = Record<string, Attempt>
+
+async function loadAttempts(): Promise<AttemptLog> {
+  const row = await db.meta.get(ATTEMPTS_KEY)
+  return (row?.value as AttemptLog | undefined) ?? {}
+}
+
+async function saveAttempts(log: AttemptLog): Promise<void> {
+  await db.meta.put({ key: ATTEMPTS_KEY, value: log })
+}
+
+/** Oublie l'historique : tout redevient « jamais tenté ». */
+export async function clearAttempts(): Promise<void> {
+  await db.meta.delete(ATTEMPTS_KEY)
+}
+
+export function isIncomplete(gaps: Gaps): boolean {
+  return gaps.cover || gaps.description || gaps.pageCount || gaps.authors || gaps.publisher
+}
+
+/**
+ * Recense les fiches incomplètes.
+ *
+ * Seuls les livres ayant un ISBN sont retenus : sans lui, aucun catalogue ne
+ * peut être interrogé de façon fiable, et une recherche par titre ramènerait
+ * la mauvaise édition une fois sur trois.
+ */
+export async function findIncompleteBooks(): Promise<IncompleteBook[]> {
+  const books = await allBooks()
+  const coverIds = new Set<string>()
+  await db.covers.each((c) => coverIds.add(c.bookId))
+  const attempts = await loadAttempts()
+
+  const result: IncompleteBook[] = []
+  for (const book of books) {
+    if (!book.isbn13 && !book.isbn10) continue
+    const gaps: Gaps = {
+      cover: !coverIds.has(book.id),
+      description: !book.description,
+      pageCount: !book.pageCount,
+      authors: book.authors.length === 0,
+      publisher: !book.publisher,
+    }
+    if (!isIncomplete(gaps)) continue
+    const past = attempts[book.id]
+    result.push({ book, gaps, lastTriedAt: past?.at, tries: past?.tries ?? 0 })
+  }
+
+  // Les livres jamais tentés passent en premier : à quota limité, mieux vaut
+  // dépenser les requêtes sur du neuf que sur ce qui a déjà échoué.
+  return result.sort((a, b) => (a.lastTriedAt ?? '').localeCompare(b.lastTriedAt ?? ''))
+}
+
+/** Sépare ce qui est à traiter maintenant de ce qui a été tenté récemment. */
+export function splitByFreshness(
+  targets: IncompleteBook[],
+  retryAfterHours = 24,
+): { pending: IncompleteBook[]; cooling: IncompleteBook[] } {
+  const cutoff = new Date(Date.now() - retryAfterHours * 3600_000).toISOString()
+  const pending: IncompleteBook[] = []
+  const cooling: IncompleteBook[] = []
+  for (const t of targets) {
+    if (t.lastTriedAt && t.lastTriedAt > cutoff) cooling.push(t)
+    else pending.push(t)
+  }
+  return { pending, cooling }
+}
+
+export interface RefreshOptions {
+  lookup: (isbn: string) => Promise<BookDraft | null>
+  coverUrls: (opts: { isbn13?: string; isbn10?: string; knownUrl?: string; googleThumb?: string }) => string[]
+  /** Interroge l'état du quota d'une source, pour arrêter avant d'insister. */
+  isThrottled?: () => boolean
+  /** Pause entre deux livres, pour rester sous les limites des catalogues. */
+  delayMs?: number
+  onProgress?: (done: number, total: number, title: string) => void
+  signal?: AbortSignal
+  /** N'écrit pas le journal des tentatives (complétion d'un livre isolé). */
+  skipJournal?: boolean
+}
+
+export interface RefreshResult {
+  processed: number
+  coversAdded: number
+  fieldsFilled: number
+  untouched: number
+  /** Nombre de livres non traités parce que le quota a été atteint. */
+  remaining: number
+  /** Vrai si l'arrêt vient d'un quota de catalogue, pas de l'utilisateur. */
+  stoppedByQuota: boolean
+}
+
+/**
+ * Pause entre deux livres. Open Library demande de rester sous ~1 requête par
+ * seconde ; 400 ms laisse de la marge tout en traitant 150 livres en une
+ * minute. C'est aussi ce qui évite de faire chauffer le téléphone.
+ */
+const DEFAULT_DELAY_MS = 400
+
+/**
+ * Complète les fiches depuis les catalogues, sans jamais écraser ce qui existe.
+ *
+ * Règle absolue : on ne remplit que les trous. Les notes, tags, dates et
+ * statuts saisis par l'utilisateur ne sont pas concernés, et un titre corrigé
+ * à la main n'est pas remplacé par celui du catalogue — c'est le genre de
+ * « mise à jour » qui fait perdre confiance dans un outil.
+ *
+ * Traitement séquentiel : enchaîner 300 requêtes en parallèle ferait bloquer
+ * l'adresse IP par Open Library, et le gain de temps serait illusoire.
+ */
+export async function refreshBooks(
+  targets: IncompleteBook[],
+  options: RefreshOptions,
+): Promise<RefreshResult> {
+  const result: RefreshResult = {
+    processed: 0,
+    coversAdded: 0,
+    fieldsFilled: 0,
+    untouched: 0,
+    remaining: targets.length,
+    stoppedByQuota: false,
+  }
+
+  const delay = options.delayMs ?? DEFAULT_DELAY_MS
+  const journal = options.skipJournal ? {} : await loadAttempts()
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  for (const { book, gaps } of targets) {
+    if (options.signal?.aborted) break
+
+    // Quota atteint : on s'arrête net plutôt que de parcourir le reste de la
+    // liste en échouant à chaque fois. Les livres non traités restent marqués
+    // « jamais tentés » et seront repris au prochain passage, demain si besoin.
+    if (options.isThrottled?.()) {
+      result.stoppedByQuota = true
+      break
+    }
+
+    options.onProgress?.(result.processed, targets.length, book.title)
+    result.processed++
+    result.remaining--
+
+    const isbn = book.isbn13 ?? book.isbn10
+    if (!isbn) continue
+
+    if (!options.skipJournal) {
+      journal[book.id] = { at: nowIso(), tries: (journal[book.id]?.tries ?? 0) + 1 }
+    }
+
+    let draft: BookDraft | null = null
+    // Inutile d'interroger les catalogues si seule la couverture manque :
+    // les URL se construisent depuis l'ISBN sans aucune requête de métadonnées.
+    const needsMetadata = gaps.description || gaps.pageCount || gaps.authors || gaps.publisher
+    if (needsMetadata) {
+      try {
+        draft = await options.lookup(isbn)
+      } catch {
+        /* source injoignable : on tente quand meme la couverture */
+      }
+    }
+
+    const changes: Partial<Book> = {}
+    if (draft) {
+      if (gaps.description && draft.description) changes.description = draft.description
+      if (gaps.pageCount && draft.pageCount) changes.pageCount = draft.pageCount
+      if (gaps.authors && draft.authors.length > 0) changes.authors = draft.authors
+      if (gaps.publisher && draft.publisher) changes.publisher = draft.publisher
+      if (!book.publishedYear && draft.publishedYear) changes.publishedYear = draft.publishedYear
+      if (!book.language && draft.language) changes.language = draft.language
+      if (book.subjects.length === 0 && draft.subjects.length > 0) changes.subjects = draft.subjects
+      if (!book.isbn13 && draft.isbn13) changes.isbn13 = draft.isbn13
+    }
+
+    if (gaps.cover) {
+      const found = await cacheCoverFromCandidates(
+        book.id,
+        options.coverUrls({
+          isbn13: book.isbn13,
+          isbn10: book.isbn10,
+          knownUrl: book.coverUrl,
+          googleThumb: draft?.coverUrl,
+        }),
+      )
+      if (found) {
+        result.coversAdded++
+        if (found !== book.coverUrl) changes.coverUrl = found
+      }
+    }
+
+    const filled = Object.keys(changes).length
+    if (filled > 0) {
+      await updateBook(book.id, changes)
+      result.fieldsFilled += filled
+    } else if (!gaps.cover) {
+      result.untouched++
+    }
+
+    // Journal sauvegardé au fil de l'eau : si l'app est fermée en cours de
+    // route, ce qui a déjà été tenté n'est pas redemandé au prochain passage.
+    if (!options.skipJournal && result.processed % 10 === 0) {
+      await saveAttempts(journal)
+    }
+
+    if (delay > 0) await sleep(delay)
+  }
+
+  if (!options.skipJournal) await saveAttempts(journal)
+
+  options.onProgress?.(result.processed, targets.length, '')
+  return result
+}
+
+/** Recharge une seule fiche, depuis le détail d'un livre. */
+export async function refreshOne(book: Book, options: RefreshOptions): Promise<RefreshResult> {
+  const gaps: Gaps = {
+    cover: !(await hasCover(book.id)),
+    description: !book.description,
+    pageCount: !book.pageCount,
+    authors: book.authors.length === 0,
+    publisher: !book.publisher,
+  }
+  // Pas de pause ni de journal : l'utilisateur attend devant son écran, et une
+  // demande explicite ne doit pas être bloquée par « déjà tenté hier ».
+  return refreshBooks([{ book, gaps, tries: 0 }], { ...options, delayMs: 0, skipJournal: true })
 }
 
 // ------------------------------------------------------------------ statistiques

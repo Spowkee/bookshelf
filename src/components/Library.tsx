@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { STATUS_LABELS, STATUS_ORDER, type Book, type ReadingStatus } from '../db/schema'
 import { BookCover } from './BookCover'
 import { IconBooks } from './icons'
+import { AlphabetIndex, indexLetter } from './AlphabetIndex'
 
 type SortKey = 'recent' | 'title' | 'author' | 'year' | 'rating'
 
@@ -13,6 +14,9 @@ const SORT_LABELS: Record<SortKey, string> = {
   rating: 'Note',
 }
 
+/** Les tris où un index alphabétique a du sens. */
+const ALPHABETICAL: SortKey[] = ['title', 'author']
+
 interface Props {
   books: Book[]
   onOpen: (book: Book) => void
@@ -20,14 +24,22 @@ interface Props {
 }
 
 /** Normalise pour une recherche insensible aux accents et à la casse. */
-const fold = (s: string) =>
-  s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
+/**
+ * Retire l'article initial pour le classement : « Les Misérables » se range
+ * à M, pas à L — sinon un quart de la bibliothèque s'entasse sous « L ».
+ */
+function sortableTitle(title: string): string {
+  return title.replace(/^\s*(l'|le |la |les |un |une |des |the |a |an )/i, '').trim() || title
+}
 
 export function Library({ books, onOpen, onGoScan }: Props) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<ReadingStatus | 'all'>('all')
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [sort, setSort] = useState<SortKey>('recent')
+  const sectionRefs = useRef(new Map<string, HTMLDivElement>())
 
   const allTags = useMemo(() => {
     const counts = new Map<string, number>()
@@ -55,7 +67,7 @@ export function Library({ books, onOpen, onGoScan }: Props) {
     sorted.sort((a, b) => {
       switch (sort) {
         case 'title':
-          return a.title.localeCompare(b.title, 'fr')
+          return sortableTitle(a.title).localeCompare(sortableTitle(b.title), 'fr')
         case 'author':
           return (a.authors[0] ?? 'zzz').localeCompare(b.authors[0] ?? 'zzz', 'fr')
         case 'year':
@@ -69,6 +81,28 @@ export function Library({ books, onOpen, onGoScan }: Props) {
     return sorted
   }, [books, query, statusFilter, tagFilter, sort])
 
+  const alphabetical = ALPHABETICAL.includes(sort)
+
+  /** Découpe la liste triée en sections d'une lettre. */
+  const sections = useMemo(() => {
+    if (!alphabetical) return null
+    const groups: Array<{ letter: string; books: Book[] }> = []
+    for (const book of shown) {
+      const key = sort === 'author' ? (book.authors[0] ?? '#') : sortableTitle(book.title)
+      const letter = indexLetter(key)
+      const last = groups[groups.length - 1]
+      if (last && last.letter === letter) last.books.push(book)
+      else groups.push({ letter, books: [book] })
+    }
+    return groups
+  }, [shown, alphabetical, sort])
+
+  const available = useMemo(() => new Set((sections ?? []).map((s) => s.letter)), [sections])
+
+  const scrollToLetter = useCallback((letter: string) => {
+    sectionRefs.current.get(letter)?.scrollIntoView({ block: 'start', behavior: 'auto' })
+  }, [])
+
   if (books.length === 0) {
     return (
       <div className="empty">
@@ -79,6 +113,20 @@ export function Library({ books, onOpen, onGoScan }: Props) {
       </div>
     )
   }
+
+  const renderGrid = (list: Book[]) => (
+    <div className="grid">
+      {list.map((b) => (
+        <button key={b.id} className="grid-item" onClick={() => onOpen(b)}>
+          <BookCover bookId={b.id} coverUrl={b.coverUrl} title={b.title}>
+            <span className={`status-dot dot-${b.status}`} title={STATUS_LABELS[b.status]} />
+          </BookCover>
+          <h4>{b.title}</h4>
+          <p>{b.authors[0] ?? '—'}</p>
+        </button>
+      ))}
+    </div>
+  )
 
   return (
     <>
@@ -122,8 +170,10 @@ export function Library({ books, onOpen, onGoScan }: Props) {
       )}
 
       <div className="row" style={{ marginBottom: 14 }}>
-        <span className="tiny muted">{shown.length} livre{shown.length > 1 ? 's' : ''}</span>
-        <div className="spacer" style={{ flex: 1 }} />
+        <span className="tiny muted">
+          {shown.length} livre{shown.length > 1 ? 's' : ''}
+        </span>
+        <div style={{ flex: 1 }} />
         <select
           className="input"
           style={{ width: 'auto', padding: '7px 10px', fontSize: '0.85rem' }}
@@ -132,25 +182,39 @@ export function Library({ books, onOpen, onGoScan }: Props) {
           aria-label="Trier par"
         >
           {Object.entries(SORT_LABELS).map(([k, label]) => (
-            <option key={k} value={k}>{label}</option>
+            <option key={k} value={k}>
+              {label}
+            </option>
           ))}
         </select>
       </div>
 
       {shown.length === 0 ? (
         <p className="empty small">Aucun livre ne correspond à ce filtre.</p>
-      ) : (
-        <div className="grid">
-          {shown.map((b) => (
-            <button key={b.id} className="grid-item" onClick={() => onOpen(b)}>
-              <BookCover bookId={b.id} coverUrl={b.coverUrl} title={b.title}>
-                <span className={`status-dot dot-${b.status}`} title={STATUS_LABELS[b.status]} />
-              </BookCover>
-              <h4>{b.title}</h4>
-              <p>{b.authors[0] ?? '—'}</p>
-            </button>
-          ))}
+      ) : sections ? (
+        <div className="indexed">
+          <div className="indexed-content">
+            {sections.map((section) => (
+              <div
+                key={section.letter}
+                className="alpha-section"
+                ref={(el) => {
+                  if (el) sectionRefs.current.set(section.letter, el)
+                  else sectionRefs.current.delete(section.letter)
+                }}
+              >
+                <h3 className="alpha-head">
+                  {section.letter}
+                  <span>{section.books.length}</span>
+                </h3>
+                {renderGrid(section.books)}
+              </div>
+            ))}
+          </div>
+          <AlphabetIndex available={available} onPick={scrollToLetter} />
         </div>
+      ) : (
+        renderGrid(shown)
       )}
     </>
   )

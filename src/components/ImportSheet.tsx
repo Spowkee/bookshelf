@@ -136,7 +136,7 @@ export function ImportSheet({ file, onClose, onDone }: Props) {
 
   if (phase === 'error') {
     return (
-      <Sheet onClose={onClose}>
+      <Sheet onClose={onClose} title="Importer une bibliothèque">
         <div className="banner banner-error">{error}</div>
         <button className="btn btn-block" onClick={onClose}>Fermer</button>
       </Sheet>
@@ -146,7 +146,7 @@ export function ImportSheet({ file, onClose, onDone }: Props) {
   if (phase === 'importing') {
     const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
     return (
-      <Sheet onClose={() => {}}>
+      <Sheet onClose={() => {}} title="Import" locked>
         <div className="section-title">Import en cours</div>
         <p className="small muted">
           {progress.done} / {progress.total} livres traités
@@ -159,7 +159,7 @@ export function ImportSheet({ file, onClose, onDone }: Props) {
   }
 
   return (
-    <Sheet onClose={onClose}>
+    <Sheet onClose={onClose} title="Importer une bibliothèque">
       <div className="section-title">Fichier détecté</div>
       <p className="small muted" style={{ marginTop: 0 }}>
         <b>{file.name}</b> — {rows.length} ligne{rows.length > 1 ? 's' : ''}, {headers.length} colonne

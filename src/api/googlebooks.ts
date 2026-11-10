@@ -57,10 +57,60 @@ function toDraft(v: GbVolume): BookDraft | null {
   }
 }
 
+/**
+ * Gestion du quota Google.
+ *
+ * Sans clé, le quota est compté par adresse IP et partagé avec tous ceux qui
+ * sortent par la même. Une fois la limite atteinte, Google répond 429 à TOUTES
+ * les requêtes suivantes, parfois pendant des heures. Marteler l'API dans cet
+ * état est non seulement inutile, c'est ce qui prolonge le blocage.
+ *
+ * D'où deux garde-fous :
+ *  - un espacement minimal entre deux appels, pour ne pas déclencher la limite ;
+ *  - une mise en sommeil dès le premier 429 : on cesse d'appeler Google et on
+ *    laisse les autres sources prendre le relais, sans échouer pour autant.
+ *
+ * L'état vit en mémoire : un redémarrage de l'app repart à zéro, ce qui est le
+ * comportement voulu puisque le quota se renouvelle de son côté.
+ */
+const MIN_INTERVAL_MS = 300
+const COOLDOWN_MS = 15 * 60 * 1000
+
+let lastCallAt = 0
+let throttledUntil = 0
+
+/** Google est-il en sommeil pour cause de quota dépassé ? */
+export function isThrottled(): boolean {
+  return Date.now() < throttledUntil
+}
+
+/** Minutes restantes avant de pouvoir réessayer. */
+export function throttleMinutesLeft(): number {
+  return Math.max(0, Math.ceil((throttledUntil - Date.now()) / 60_000))
+}
+
+export function resetThrottle(): void {
+  throttledUntil = 0
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 async function gbFetch(params: URLSearchParams, signal?: AbortSignal): Promise<GbVolume[]> {
+  if (isThrottled()) throw new Error('Google Books: quota atteint, en pause')
+
+  const wait = MIN_INTERVAL_MS - (Date.now() - lastCallAt)
+  if (wait > 0) await sleep(wait)
+  lastCallAt = Date.now()
+
   if (API_KEY) params.set('key', API_KEY)
   const res = await fetch(`${BASE}?${params}`, { signal })
+
+  if (res.status === 429 || res.status === 403) {
+    throttledUntil = Date.now() + COOLDOWN_MS
+    throw new Error('Google Books: quota atteint')
+  }
   if (!res.ok) throw new Error(`Google Books: HTTP ${res.status}`)
+
   const data = (await res.json()) as { items?: GbVolume[] }
   return data.items ?? []
 }
